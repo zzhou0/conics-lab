@@ -125,9 +125,11 @@
       --grid: #daeaf0; --axis: #7194a1; --focus: #184e61;
     }
     .drawing-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 340px); gap: 16px; align-items: start; padding-bottom: 26px; }
-    .drawing-surface { touch-action: none; }
+    .drawing-surface { touch-action: pan-y; }
+    .drawing-surface .drag-target, .drawing-surface .drag-handle { touch-action: none; }
     .drawing-layout .plot { height: clamp(260px, 39vw, 472px); }
-    .plot-scroll-hint { display: none; margin: 8px 0 0; }
+    .plot-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+    .plot-scroll-hint { display: none; }
     .drawing-side { display: grid; gap: 14px; min-width: 0; }
     #drawing-panel { position: sticky; top: 12px; }
     .drawing-equation { font-size: clamp(1.05rem, 2.25vw, 1.55rem); line-height: 1.4; margin-top: 6px; overflow-wrap: anywhere; }
@@ -271,7 +273,10 @@
               <g data-layer="annotations"></g>
             </svg>
           </div>
-          <p class="form-hint plot-scroll-hint">从绘图区外上下滑动页面。</p>
+          <div class="plot-tools">
+            <p class="form-hint">滚轮或双指缩放。<span class="plot-scroll-hint">单指从空白处上下滚动。</span></p>
+            <button class="tool-button" type="button" id="reset-view">重置视野</button>
+          </div>
           <div class="legend">
             <span><i></i>曲线</span>
             <span id="drawing-focus-key"><i class="dot"></i>焦点</span>
@@ -468,29 +473,33 @@
       return element;
     }
 
-    function drawGrid(layer, width, height, unit, tickValue = 1) {
-      const halfWidth = width / 2;
-      const halfHeight = height / 2;
+    function drawGrid(layer, width, height, unit, tickValue = 1, centerX = 0, centerY = 0) {
+      const left = centerX - width / 2;
+      const right = centerX + width / 2;
+      const top = centerY - height / 2;
+      const bottom = centerY + height / 2;
+      const tickY = Math.max(top + 14, Math.min(bottom - 3, 15));
+      const tickX = Math.max(left + 26, Math.min(right - 6, -8));
       layer.replaceChildren();
-      for (let n = 1; n * unit < halfWidth - 8; n++) {
-        for (const side of [-1, 1]) {
-          const x = side * n * unit;
-          layer.append(svgElement('line', { class: 'grid', x1: x, x2: x, y1: -halfHeight, y2: halfHeight }));
-          if (n % 2 === 0) layer.append(svgElement('text', { class: 'tick', x, y: 15, 'text-anchor': 'middle' }, formatNumber(side * n * tickValue)));
-        }
+      for (let n = Math.ceil((left + 8) / unit); n * unit < right - 8; n++) {
+        if (n === 0) continue;
+        const x = n * unit;
+        layer.append(svgElement('line', { class: 'grid', x1: x, x2: x, y1: top, y2: bottom }));
+        if (n % 2 === 0) layer.append(svgElement('text', { class: 'tick', x, y: tickY, 'text-anchor': 'middle' }, formatNumber(n * tickValue)));
       }
-      for (let n = 1; n * unit < halfHeight - 8; n++) {
-        for (const side of [-1, 1]) {
-          const y = side * n * unit;
-          layer.append(svgElement('line', { class: 'grid', x1: -halfWidth, x2: halfWidth, y1: y, y2: y }));
-          if (n % 2 === 0) layer.append(svgElement('text', { class: 'tick', x: -8, y: y + 4, 'text-anchor': 'end' }, formatNumber(-side * n * tickValue)));
-        }
+      for (let n = Math.ceil((top + 8) / unit); n * unit < bottom - 8; n++) {
+        if (n === 0) continue;
+        const y = n * unit;
+        layer.append(svgElement('line', { class: 'grid', x1: left, x2: right, y1: y, y2: y }));
+        if (n % 2 === 0) layer.append(svgElement('text', { class: 'tick', x: tickX, y: y + 4, 'text-anchor': 'end' }, formatNumber(-n * tickValue)));
       }
-      layer.append(
-        svgElement('line', { class: 'axis', x1: -halfWidth, x2: halfWidth, y1: 0, y2: 0 }),
-        svgElement('line', { class: 'axis', x1: 0, x2: 0, y1: -halfHeight, y2: halfHeight }),
-        svgElement('text', { class: 'axis-name', x: halfWidth - 16, y: -9 }, 'x'),
-        svgElement('text', { class: 'axis-name', x: 8, y: 20 - halfHeight }, 'y')
+      if (top <= 0 && bottom >= 0) layer.append(
+        svgElement('line', { class: 'axis', x1: left, x2: right, y1: 0, y2: 0 }),
+        svgElement('text', { class: 'axis-name', x: right - 16, y: Math.max(top + 14, -9) }, 'x')
+      );
+      if (left <= 0 && right >= 0) layer.append(
+        svgElement('line', { class: 'axis', x1: 0, x2: 0, y1: top, y2: bottom }),
+        svgElement('text', { class: 'axis-name', x: Math.min(8, right - 12), y: top + 20 }, 'y')
       );
     }
 
@@ -506,10 +515,7 @@
           y1: sign * lineY, y2: -sign * lineY,
         }));
       }
-      const run = Math.sqrt(Math.max(0, horizontalLimit ** 2 - a ** 2));
-      const visibleRun = Math.min(run, verticalLimit * a / b);
-      const visibleRise = Math.min(verticalLimit, run * b / a);
-      const pointAt = (t, side) => [side * Math.hypot(a, visibleRun * t), -visibleRise * t];
+      const pointAt = hyperbolaPointAt(a, b, width, height);
       for (const side of [-1, 1]) {
         const points = [];
         for (let i = 0; i <= 120; i++) {
@@ -521,16 +527,17 @@
       return pointAt;
     }
 
+    function hyperbolaPointAt(a, b, width, height) {
+      const run = Math.sqrt(Math.max(0, (width / 2 + 4) ** 2 - a ** 2));
+      const verticalLimit = height / 2 + 4;
+      const visibleRun = Math.min(run, verticalLimit * a / b);
+      const visibleRise = Math.min(verticalLimit, run * b / a);
+      return (t, side) => [side * Math.hypot(a, visibleRun * t), -visibleRise * t];
+    }
+
     function drawParabola(layer, focusOffset, axialSize, crossSize) {
-      const direction = Math.sign(focusOffset);
       const directrix = -focusOffset;
-      const axialLimit = axialSize / 2 + 4;
-      const rootWidth = 2 * Math.sqrt(Math.abs(focusOffset));
-      const transverseLimit = Math.min(crossSize / 2 + 4, rootWidth * Math.sqrt(axialLimit));
-      const pointAt = t => {
-        const cross = transverseLimit * t;
-        return [rootWidth ? direction * (cross / rootWidth) ** 2 : 0, cross];
-      };
+      const pointAt = parabolaPointAt(focusOffset, axialSize, crossSize);
       const points = [];
       for (let i = 0; i <= 160; i++) {
         points.push(pointAt(2 * i / 160 - 1).map(coordinate => coordinate.toFixed(2)).join(','));
@@ -540,6 +547,16 @@
         svgElement('polyline', { class: 'curve', points: points.join(' ') })
       );
       return pointAt;
+    }
+
+    function parabolaPointAt(focusOffset, axialSize, crossSize) {
+      const direction = Math.sign(focusOffset);
+      const rootWidth = 2 * Math.sqrt(Math.abs(focusOffset));
+      const transverseLimit = Math.min(crossSize / 2 + 4, rootWidth * Math.sqrt(axialSize / 2 + 4));
+      return t => {
+        const cross = transverseLimit * t;
+        return [rootWidth ? direction * (cross / rootWidth) ** 2 : 0, cross];
+      };
     }
 
     function observeComparisonPlot(plot, draw) {
@@ -1221,6 +1238,7 @@
     const parameterSign = aField.nextElementSibling;
     const formError = document.querySelector('#form-error');
     const drawingPanel = document.querySelector('#drawing-panel');
+    const drawingSurface = drawingPanel.querySelector('.drawing-surface');
     const drawingPlot = document.querySelector('#drawing-plot');
     const drawingGrid = drawingPlot.querySelector('[data-layer="grid"]');
     const drawingSegments = drawingPlot.querySelector('[data-layer="segments"]');
@@ -1299,15 +1317,24 @@
       if (!model || !width || !height) return;
       const { id, axis, a, b, focusOffset, foci } = model;
       const reference = selection.annotations.overlays.reduce((maximum, overlay) => Math.max(maximum, overlay.extent ?? 0), model.reference);
-      const radius = Math.min(width, height) * .34;
+      const baseRadius = Math.min(width, height) * .34;
+      const view = selection.annotations.view;
+      const { zoom } = view;
+      const radius = baseRadius * zoom;
       const toPixels = value => value / reference * radius;
       const toUnits = pixels => pixels / radius * reference;
+      const centerX = view.x * radius;
+      const centerY = view.y * radius;
+      const bounds = {
+        left: centerX - width / 2, right: centerX + width / 2,
+        top: centerY - height / 2, bottom: centerY + height / 2,
+      };
       const rawStep = 35 / radius * reference;
       const magnitude = 10 ** Math.floor(Math.log10(rawStep)) || Number.MIN_VALUE;
       const tickValue = [1, 2, 5, 10].map(multiplier => magnitude * multiplier).find(step => step >= rawStep) ?? magnitude;
       const gridUnit = toPixels(tickValue);
-      drawingPlot.setAttribute('viewBox', `${-width / 2} ${-height / 2} ${width} ${height}`);
-      drawGrid(drawingGrid, width, height, Number.isFinite(gridUnit) && gridUnit >= 16 ? gridUnit : 35, tickValue);
+      drawingPlot.setAttribute('viewBox', `${bounds.left} ${bounds.top} ${width} ${height}`);
+      drawGrid(drawingGrid, width, height, Number.isFinite(gridUnit) && gridUnit >= 16 ? gridUnit : 35, tickValue, centerX, centerY);
       drawingCurve.replaceChildren();
       drawingFoci.replaceChildren();
 
@@ -1317,6 +1344,10 @@
       drawingCurve.append(geometry);
       const axialSize = vertical ? height : width;
       const crossSize = vertical ? width : height;
+      const coverWidth = width + 2 * Math.abs(centerX);
+      const coverHeight = height + 2 * Math.abs(centerY);
+      const axialCoverage = vertical ? coverHeight : coverWidth;
+      const crossCoverage = vertical ? coverWidth : coverHeight;
       let pointAt;
       let ellipse;
       if (id === 'circle') {
@@ -1325,7 +1356,7 @@
         geometry.append(svgElement('circle', { ...size, class: 'interior' }), svgElement('circle', { ...size, class: 'curve' }));
         pointAt = ellipse.at;
         const label = `C(${formatNumber(model.center[0])}, ${formatNumber(model.center[1])})`;
-        const before = ellipse.cx + 8 + label.length * 7 > width / 2;
+        const before = ellipse.cx + 8 + label.length * 7 > bounds.right;
         drawingFoci.append(
           svgElement('circle', { cx: ellipse.cx, cy: ellipse.cy, r: 4.7, class: 'focus circle-center' }),
           svgElement('text', {
@@ -1346,9 +1377,13 @@
           },
         };
       } else if (id === 'hyperbola') {
-        pointAt = drawHyperbola(geometry, toPixels(a), toPixels(b), axialSize, crossSize);
+        drawHyperbola(geometry, toPixels(a), toPixels(b), axialCoverage, crossCoverage);
+        const basePointAt = hyperbolaPointAt(toPixels(a) / zoom, toPixels(b) / zoom, axialSize, crossSize);
+        pointAt = (t, side) => basePointAt(t, side).map(value => value * zoom);
       } else {
-        pointAt = drawParabola(geometry, toPixels(focusOffset), axialSize, crossSize);
+        drawParabola(geometry, toPixels(focusOffset), axialCoverage, crossCoverage);
+        const basePointAt = parabolaPointAt(toPixels(focusOffset) / zoom, axialSize, crossSize);
+        pointAt = t => basePointAt(t).map(value => value * zoom);
       }
 
       for (const { position, label } of foci) {
@@ -1362,14 +1397,14 @@
           }, label)
         );
       }
-      selection.geometry = { width, height, project, toPixels, toUnits, pointAt, ellipse };
+      selection.geometry = { width, height, bounds, centerX, centerY, baseRadius, radius, project, toPixels, toUnits, pointAt, ellipse };
       renderOverlays();
       renderAnnotations();
     }
 
     function graphLine(overlay, geometry) {
       const { a, b, c } = overlay;
-      const { width, height, toPixels } = geometry;
+      const { bounds, toPixels } = geometry;
       const offset = toPixels(-c);
       const x = a * offset;
       const y = -b * offset;
@@ -1377,10 +1412,16 @@
       const dy = -a;
       let low = -Infinity;
       let high = Infinity;
-      for (const [origin, direction, bound] of [[x, dx, width / 2], [y, dy, height / 2]]) {
-        if (direction === 0) continue;
-        const first = (-bound - origin) / direction;
-        const second = (bound - origin) / direction;
+      for (const [origin, direction, minimum, maximum] of [[x, dx, bounds.left, bounds.right], [y, dy, bounds.top, bounds.bottom]]) {
+        if (direction === 0) {
+          if (origin < minimum || origin > maximum) {
+            low = Infinity;
+            high = -Infinity;
+          }
+          continue;
+        }
+        const first = (minimum - origin) / direction;
+        const second = (maximum - origin) / direction;
         low = Math.max(low, Math.min(first, second));
         high = Math.min(high, Math.max(first, second));
       }
@@ -1429,10 +1470,11 @@
         if (!overlay.ready) continue;
         if (overlay.kind === 'line') {
           const line = graphLine(overlay, geometry);
-          const [x1, y1] = line.at(line.low);
-          const [x2, y2] = line.at(line.high);
           line.intersections = lineIntersections(line, geometry);
           geometry.overlays.set(overlay.id, line);
+          if (line.high < line.low) continue;
+          const [x1, y1] = line.at(line.low);
+          const [x2, y2] = line.at(line.high);
           const selected = annotations.activeLine === overlay.id;
           drawingOverlays.append(
             svgElement('line', { class: selected ? 'overlay-line is-selected' : 'overlay-line', 'data-line-id': overlay.id, x1, y1, x2, y2 }),
@@ -1523,8 +1565,7 @@
       if (!point.overlay) return geometry.project(geometry.pointAt(point.t, point.side));
       const overlay = geometry.overlays.get(point.overlay);
       if (point.shape === 'circle') return overlay.at(point.t);
-      const distance = geometry.toPixels(point.t);
-      return overlay.at(Math.max(overlay.low, Math.min(overlay.high, distance)));
+      return overlay.at(geometry.toPixels(point.t));
     }
 
     function endpointLocation(endpoint, geometry) {
@@ -1656,8 +1697,8 @@
           targets.push(oval.at(other.t));
         }
       }
-      const visible = targets.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)
-        && Math.abs(x) <= geometry.width / 2 && Math.abs(y) <= geometry.height / 2);
+      const { left, right, top, bottom } = geometry.bounds;
+      const visible = targets.filter(([x, y]) => x >= left && x <= right && y >= top && y <= bottom);
       const distinct = [];
       for (const target of visible) {
         if (distinct.every(([x, y]) => Math.hypot(x - target[0], y - target[1]) > 1e-4)) distinct.push(target);
@@ -1736,7 +1777,7 @@
     function renderAnnotations() {
       const { annotations, geometry } = selection;
       if (!geometry) return;
-      const { width, height } = geometry;
+      const { width, bounds } = geometry;
       drawingSegments.replaceChildren();
       drawingAnnotations.replaceChildren();
       const endpoints = endpointCatalog().map(endpoint => ({ ...endpoint, location: endpointLocation(endpoint, geometry) }));
@@ -1760,8 +1801,8 @@
           const textWidth = Math.min(width * .44, Math.max(label.length, coordinateLabel.length) * 7.5);
           const horizontalVertex = direction === 'left' || direction === 'right';
           const avoidFocus = vertex && !horizontalVertex && (direction === 'top' || selection.id === 'parabola');
-          const labelOnLeft = x + textWidth + 12 > width / 2 || ((x < 0 || avoidFocus) && x - textWidth - 12 > -width / 2);
-          const labelBelow = horizontalVertex || y < -height / 2 + 26;
+          const labelOnLeft = x + textWidth + 12 > bounds.right || ((x < 0 || avoidFocus) && x - textWidth - 12 > bounds.left);
+          const labelBelow = y < bounds.top + 26 || (horizontalVertex && y < bounds.bottom - 32);
           const textX = x + (labelOnLeft ? -8 : 8);
           const textY = y + (labelBelow ? 18 : -10);
           const anchor = labelOnLeft ? 'end' : 'start';
@@ -1883,7 +1924,7 @@
         let t = (fraction - .5) * 1.8;
         if (overlay?.kind === 'line') {
           const { low, high } = selection.geometry.overlays.get(overlay.id);
-          t = selection.geometry.toUnits(low + (high - low) * (.18 + .64 * fraction));
+          t = high >= low ? selection.geometry.toUnits(low + (high - low) * (.18 + .64 * fraction)) : 0;
         }
         const shape = overlay?.kind ?? selection.id;
         annotations.points.push({ id: `curve-${index}`, label, t, side: index % 2 ? -1 : 1, overlay: overlay?.id, shape });
@@ -2113,25 +2154,34 @@
     });
 
     function nearestCurveParameter(point, x, y) {
-      const { model, geometry: { project, pointAt } } = selection;
-      const limit = model.id === 'ellipse' ? 1 : .95;
+      const { model, geometry: { project, pointAt, bounds } } = selection;
+      let minimum = -1;
+      let maximum = 1;
+      if (model.id !== 'ellipse') {
+        const vertical = model.axis === 'y';
+        const cross = project(pointAt(1, point.side))[vertical ? 0 : 1];
+        if (cross) {
+          const edges = vertical ? [bounds.left, bounds.right] : [bounds.top, bounds.bottom];
+          [minimum, maximum] = edges.map(edge => edge / cross).sort((a, b) => a - b);
+        }
+      }
       const distance = t => {
         const [px, py] = project(pointAt(t, point.side));
         return (px - x) ** 2 + (py - y) ** 2;
       };
-      const step = 2 * limit / 100;
-      let best = -limit;
+      const step = (maximum - minimum) / 100;
+      let best = minimum;
       let bestDistance = Infinity;
       for (let i = 0; i <= 100; i++) {
-        const t = -limit + i * step;
+        const t = minimum + i * step;
         const squaredDistance = distance(t);
         if (squaredDistance < bestDistance) {
           bestDistance = squaredDistance;
           best = t;
         }
       }
-      let left = Math.max(-limit, best - step);
-      let right = Math.min(limit, best + step);
+      let left = Math.max(minimum, best - step);
+      let right = Math.min(maximum, best + step);
       for (let i = 0; i < 15; i++) {
         const lower = left + (right - left) / 3;
         const upper = right - (right - left) / 3;
@@ -2166,13 +2216,17 @@
       return nearby[0].position;
     }
 
-    drawingPlot.addEventListener('pointerdown', event => {
+    function scenePoint({ clientX, clientY }) {
+      const transform = drawingPlot.getScreenCTM()?.inverse();
+      return transform ? new DOMPoint(clientX, clientY).matrixTransform(transform) : null;
+    }
+
+    function startPointDrag(event) {
       const handle = event.target.closest('[data-point-id]');
       if (!handle || drag || event.button !== 0) return;
       const { annotations, geometry } = selection;
-      const transform = drawingPlot.getScreenCTM()?.inverse();
-      if (!transform) return;
-      const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform);
+      const pointer = scenePoint(event);
+      if (!pointer) return;
       // Large touch targets can overlap. Pick the marker whose center is closest.
       let point = annotations.points.find(item => item.id === handle.dataset.pointId);
       let [pointX, pointY] = pointLocation(point, geometry);
@@ -2197,19 +2251,20 @@
       drag = {
         pointerId: event.pointerId, point, dx: pointX - pointer.x, dy: pointY - pointer.y,
         startX: event.clientX, startY: event.clientY, moved: false,
+        touch: event.pointerType === 'touch',
         rawDistance, oval, distanceScale, targets,
         lastSnap: targets.find(target => Math.abs(nearestWrappedDistance(target, rawDistance, 2 * distanceScale) - rawDistance) < 1e-4),
       };
       drawingPlot.setPointerCapture(event.pointerId);
       event.preventDefault();
-    });
-    drawingPlot.addEventListener('pointermove', event => {
+    }
+
+    function movePointDrag(event) {
       if (drag?.pointerId !== event.pointerId || !selection?.geometry) return;
       if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return;
       drag.moved = true;
-      const transform = drawingPlot.getScreenCTM()?.inverse();
-      if (!transform) return;
-      const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform);
+      const pointer = scenePoint(event);
+      if (!pointer) return;
       const x = pointer.x + drag.dx;
       const y = pointer.y + drag.dy;
       const { geometry } = selection;
@@ -2227,6 +2282,123 @@
       }
       if (selection.annotations.overlays.some(overlay => overlay.anchors?.includes(drag.point.id))) renderOverlays();
       renderAnnotations();
+    }
+
+    function finishPointDrag(event) {
+      if (!drag) return;
+      const state = drag;
+      drag = null;
+      const tap = event?.type === 'pointerup' && !state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < 5;
+      if (tap && ['ellipse', 'line', 'circle'].includes(state.point.shape)) state.point.showCoordinates = !state.point.showCoordinates;
+      if (tap || state.snap) renderAnnotations();
+    }
+
+    function zoomAnchor(pointer) {
+      const point = scenePoint(pointer);
+      if (!point) return null;
+      const { radius } = selection.geometry;
+      return [point.x / radius, point.y / radius];
+    }
+
+    function zoomView(requestedZoom, anchor, pointer) {
+      const point = scenePoint(pointer);
+      if (!point || !anchor) return;
+      const { centerX, centerY, baseRadius } = selection.geometry;
+      const view = selection.annotations.view;
+      const zoom = Math.max(.25, Math.min(16, requestedZoom));
+      const x = anchor[0] - (point.x - centerX) / (baseRadius * zoom);
+      const y = anchor[1] - (point.y - centerY) / (baseRadius * zoom);
+      if (zoom === view.zoom && Math.abs(view.x - x) < 1e-12 && Math.abs(view.y - y) < 1e-12) return;
+      Object.assign(view, { zoom, x, y });
+      renderDrawing();
+    }
+
+    const plotTouches = new Map();
+    let pinch = null;
+    let queuedMove = null;
+    let touchFrame = null;
+
+    function pinchMeasure(ids) {
+      const [first, second] = ids.map(id => plotTouches.get(id));
+      if (!first || !second) return null;
+      const { clientX: x1, clientY: y1 } = first;
+      const { clientX: x2, clientY: y2 } = second;
+      return {
+        center: { clientX: (x1 + x2) / 2, clientY: (y1 + y2) / 2 },
+        distance: Math.hypot(x1 - x2, y1 - y2),
+      };
+    }
+
+    function flushTouchFrame() {
+      if (touchFrame !== null) cancelAnimationFrame(touchFrame);
+      touchFrame = null;
+      if (pinch) {
+        const measure = pinchMeasure(pinch.ids);
+        if (measure) zoomView(pinch.zoom * measure.distance / pinch.distance, pinch.anchor, measure.center);
+      } else if (queuedMove) {
+        movePointDrag(queuedMove);
+      }
+      queuedMove = null;
+    }
+
+    function queueTouchFrame() {
+      if (touchFrame === null) touchFrame = requestAnimationFrame(flushTouchFrame);
+    }
+
+    function clearPlotGestures() {
+      if (touchFrame !== null) cancelAnimationFrame(touchFrame);
+      touchFrame = null;
+      queuedMove = null;
+      plotTouches.clear();
+      pinch = null;
+      drag = null;
+    }
+
+    drawingSurface.addEventListener('touchstart', event => {
+      const touchesInside = Array.from(event.touches).filter(touch => drawingSurface.contains(touch.target)).length;
+      const marker = event.target.closest('[data-point-id]');
+      // Cancel native scrolling only for a drag handle or a pinch inside the plot.
+      if (event.cancelable && (marker || pinch || touchesInside >= 2 || (drag?.touch && event.touches.length >= 2))) {
+        event.preventDefault();
+      }
+    }, { passive: false });
+
+    drawingSurface.addEventListener('touchmove', event => {
+      if (event.cancelable && (pinch || drag?.touch)) event.preventDefault();
+    }, { passive: false });
+
+    drawingPlot.addEventListener('pointerdown', event => {
+      if (!selection?.geometry) return;
+      if (event.pointerType === 'touch') {
+        plotTouches.set(event.pointerId, event);
+        if (pinch) return;
+        if (plotTouches.size === 2) {
+          const ids = [...plotTouches.keys()];
+          const { center, distance } = pinchMeasure(ids);
+          const anchor = zoomAnchor(center);
+          if (!anchor) return;
+          queuedMove = null;
+          finishPointDrag();
+          pinch = { ids, distance: Math.max(1, distance), anchor, zoom: selection.annotations.view.zoom };
+          for (const id of ids) drawingPlot.setPointerCapture(id);
+          return;
+        }
+        if (plotTouches.size > 1) return;
+      }
+      startPointDrag(event);
+    });
+
+    drawingPlot.addEventListener('pointermove', event => {
+      if (event.pointerType === 'touch' && plotTouches.has(event.pointerId)) {
+        plotTouches.set(event.pointerId, event);
+        if (pinch) queueTouchFrame();
+        else if (drag?.pointerId === event.pointerId) {
+          queuedMove = event;
+          queueTouchFrame();
+        }
+      } else {
+        movePointDrag(event);
+      }
     });
     drawingPlot.addEventListener('click', event => {
       const line = event.target.closest('[data-line-id]');
@@ -2238,14 +2410,34 @@
     });
     for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
       drawingPlot.addEventListener(eventName, event => {
+        if (eventName === 'lostpointercapture' && event.target !== drawingPlot) return;
+        if (pinch?.ids.includes(event.pointerId)) {
+          if (eventName === 'pointerup') flushTouchFrame();
+          pinch = null;
+        }
+        plotTouches.delete(event.pointerId);
         if (drag?.pointerId !== event.pointerId) return;
-        const state = drag;
-        drag = null;
-        const tap = eventName === 'pointerup' && !state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < 5;
-        if (tap && ['ellipse', 'line', 'circle'].includes(state.point.shape)) state.point.showCoordinates = !state.point.showCoordinates;
-        if (tap || state.snap) renderAnnotations();
+        if (eventName === 'pointerup' && queuedMove) flushTouchFrame();
+        queuedMove = null;
+        finishPointDrag(event);
       });
     }
+
+    drawingSurface.addEventListener('wheel', event => {
+      if (!selection?.geometry || !event.deltaY || pinch || drag) return;
+      const anchor = zoomAnchor(event);
+      if (!anchor) return;
+      event.preventDefault();
+      const size = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? selection.geometry.height : 1;
+      const delta = Math.max(-500, Math.min(500, event.deltaY * size));
+      zoomView(selection.annotations.view.zoom * Math.exp(-delta * .002), anchor, event);
+    }, { passive: false });
+
+    document.querySelector('#reset-view').addEventListener('click', () => {
+      clearPlotGestures();
+      Object.assign(selection.annotations.view, { zoom: 1, x: 0, y: 0 });
+      renderDrawing();
+    });
 
     function clearError() {
       formError.textContent = '';
@@ -2362,7 +2554,7 @@
     function renderRoute(moveFocus = true) {
       if (nameDialog.open) nameDialog.close();
       if (geometryDialog.open) geometryDialog.close();
-      drag = null;
+      clearPlotGestures();
       const [id, axis, ...rest] = location.hash.slice(1).split('/');
       const config = Object.prototype.hasOwnProperty.call(drawingConfigs, id) ? drawingConfigs[id] : null;
       let view = 'home';
@@ -2389,7 +2581,7 @@
         const program = curvePrograms.get(id);
         const annotationKey = axis ? `${id}/${axis}` : id;
         if (!annotationsByView.has(annotationKey)) {
-          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null, activeLine: null });
+          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null, activeLine: null, view: { zoom: 1, x: 0, y: 0 } });
         }
         selection = { id, axis, model: getDrawingModel(id, axis, ...inputs), annotations: annotationsByView.get(annotationKey) };
         views.drawing.querySelector('h1').textContent = `${config.name}绘图`;
