@@ -131,6 +131,19 @@
     .legend .vertex-key { width: 8px; height: 8px; border: 1.5px solid var(--accent); border-radius: 50%; }
     .parameter-form { display: grid; gap: 13px; }
     .parameter-form h2 { font-size: 1.2rem; }
+    .parameter-sliders { display: grid; gap: 10px; }
+    .parameter-slider { display: grid; gap: 5px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--border); }
+    .parameter-value, .parameter-range { display: grid; align-items: center; gap: 6px; }
+    .parameter-value { grid-template-columns: minmax(0, 1fr) minmax(70px, 32%); }
+    .parameter-range { grid-template-columns: minmax(48px, 23%) minmax(0, 1fr) minmax(48px, 23%); }
+    .parameter-slider label { font-weight: 650; }
+    .parameter-slider input:not([type="range"]) {
+      min-width: 0; width: 100%; min-height: 44px; padding: 4px;
+      border: 1px solid var(--border); border-radius: 7px; color: var(--ink); text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .parameter-slider input[aria-invalid="true"] { border-color: #aa382b; }
+    .parameter-message:empty { display: none; }
     .form-hint { margin: 0; font-size: .875rem; color: var(--muted); }
     .field label { display: block; margin-bottom: 5px; font-weight: 650; }
     .field-row { display: flex; gap: 6px; }
@@ -267,14 +280,17 @@
           <p class="form-hint" id="parameter-hint"></p>
           <div class="field">
             <label for="parameter-a" id="label-a"></label>
-            <div class="field-row"><input id="parameter-a" inputmode="decimal" enterkeyhint="go" autocomplete="off" spellcheck="false" aria-describedby="parameter-hint form-error"><button class="sign-button" type="button" aria-label="切换 a 的正负号">±</button></div>
+            <div class="field-row"><input id="parameter-a" enterkeyhint="go" autocomplete="off" spellcheck="false" aria-describedby="parameter-hint parameter-letters form-error"><button class="sign-button" type="button" aria-label="切换 a 的正负号">±</button></div>
           </div>
           <div class="field">
             <label for="parameter-b" id="label-b"></label>
-            <div class="field-row"><input id="parameter-b" inputmode="decimal" enterkeyhint="go" autocomplete="off" spellcheck="false" aria-describedby="parameter-hint form-error"><button class="sign-button" type="button" aria-label="切换 b 的正负号">±</button></div>
+            <div class="field-row"><input id="parameter-b" enterkeyhint="go" autocomplete="off" spellcheck="false" aria-describedby="parameter-hint parameter-letters form-error"><button class="sign-button" type="button" aria-label="切换 b 的正负号">±</button></div>
           </div>
+          <p class="form-hint" id="parameter-letters">可输入数值或单个字母，例如 k。</p>
           <p class="form-error" id="form-error" role="alert"></p>
           <button class="draw-button" type="submit">绘制图像</button>
+          <div class="parameter-sliders" id="curve-sliders" hidden></div>
+          <p class="form-hint parameter-message" id="curve-parameter-message" role="status"></p>
         </form>
         <section class="panel annotation-tools" id="annotation-tools" aria-labelledby="annotation-heading">
           <h2 id="annotation-heading">点与线段</h2>
@@ -339,10 +355,10 @@
       <div class="field" id="line-fields">
         <label for="line-equation">直线方程</label>
         <input id="line-equation" maxlength="300" autocomplete="off" spellcheck="false" placeholder="2x − y = 3" aria-describedby="line-examples geometry-error">
-        <p class="form-hint" id="line-examples">例如 y=2x+1、x=3、y−1=2(x−3)、x/2+y/3=1、x=1+2t; y=3−t。</p>
+        <p class="form-hint" id="line-examples">例如 y=2x+1、y=kx+b、x/2+y/3=1、x=1+2t; y=3−t。</p>
       </div>
       <div class="field" id="circle-fields">
-        <p class="form-hint">填写圆心 (a, b) 和半径 r。半径须大于 0。</p>
+        <p class="form-hint">圆心 (a, b) 和半径 r 可填数值或单个字母。半径须大于 0。</p>
         <div class="circle-equation">
           <span>(x − <input id="circle-a" aria-label="圆心横坐标 a" placeholder="a">)²</span>
           <span>+ (y − <input id="circle-b" aria-label="圆心纵坐标 b" placeholder="b">)²</span>
@@ -356,6 +372,20 @@
       </div>
     </form>
   </dialog>
+
+  <template id="parameter-slider-template">
+    <div class="parameter-slider">
+      <div class="parameter-value">
+        <label></label><input type="text" autocomplete="off" spellcheck="false" enterkeyhint="done">
+      </div>
+      <div class="parameter-range">
+        <input type="text" autocomplete="off" spellcheck="false" enterkeyhint="done">
+        <input type="range" min="0" max="2000" step="1">
+        <input type="text" autocomplete="off" spellcheck="false" enterkeyhint="done">
+      </div>
+      <p class="form-hint parameter-message" role="status"></p>
+    </div>
+  </template>
 
   <template id="panel-template">
     <section class="panel">
@@ -666,13 +696,164 @@
       return String(Number(value.toPrecision(9)));
     }
 
-    function readNumber(field) {
-      const raw = field.value.normalize('NFKC').trim().replace('−', '-').replace(',', '.');
+    function numericValue(input) {
+      const raw = input.normalize('NFKC').trim().replace('−', '-').replace(',', '.');
       return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) ? Number(raw) : NaN;
     }
 
-    function parseAffine(source) {
-      const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|sqrt|sin|cos|tan|pi|[^\s]/g) ?? [];
+    const parameterLetter = /^[a-zα-ω]$/i;
+    const sliderSteps = 2000;
+    const unboundedScale = 5;
+    let sliderLabelCount = 0;
+
+    function parameterField(field, label) {
+      const text = field.value.normalize('NFKC').trim();
+      const value = numericValue(text);
+      if (Number.isFinite(value)) return { text, value };
+      if (parameterLetter.test(text)) return { text, name: text.toLowerCase() };
+      throw Error(label + '请输入有限数值或单个字母。');
+    }
+
+    function makeBindings(names, initialValues) {
+      return new Map(names.map((name, i) => [name, { value: initialValues[i], lower: -Infinity, upper: Infinity }]));
+    }
+
+    function valuesForFields(fields, bindings) {
+      return fields.map(field => field.name ? bindings.get(field.name).value : field.value);
+    }
+
+    function fieldBindings(fields, initial, previous = new Map()) {
+      const bindings = new Map();
+      for (const [index, field] of fields.entries()) {
+        if (field.name && !bindings.has(field.name)) {
+          const existing = previous.get(field.name);
+          bindings.set(field.name, existing ? { ...existing } : { value: initial[index], lower: -Infinity, upper: Infinity });
+        }
+      }
+      return bindings;
+    }
+
+    function sliderValue(position, { lower, upper }) {
+      const fraction = position / sliderSteps;
+      if (Number.isFinite(lower) && Number.isFinite(upper)) return lower * (1 - fraction) + upper * fraction;
+      const openFraction = Math.max(1e-6, Math.min(1 - 1e-6, fraction));
+      if (Number.isFinite(lower)) return fraction === 0 ? lower : lower + unboundedScale * Math.tan(Math.PI / 2 * openFraction);
+      if (Number.isFinite(upper)) return fraction === 1 ? upper : upper - unboundedScale * Math.tan(Math.PI / 2 * (1 - openFraction));
+      return unboundedScale * Math.tan(Math.PI * (openFraction - .5));
+    }
+
+    function sliderPosition({ value, lower, upper }) {
+      if (lower === upper) return 0;
+      let fraction;
+      if (Number.isFinite(lower) && Number.isFinite(upper)) {
+        const span = upper - lower;
+        fraction = Number.isFinite(span) ? (value - lower) / span : (value / 2 - lower / 2) / (upper / 2 - lower / 2);
+      } else if (Number.isFinite(lower)) fraction = 2 / Math.PI * Math.atan((value - lower) / unboundedScale);
+      else if (Number.isFinite(upper)) fraction = 1 - 2 / Math.PI * Math.atan((upper - value) / unboundedScale);
+      else fraction = .5 + Math.atan(value / unboundedScale) / Math.PI;
+      return Math.round(sliderSteps * Math.max(0, Math.min(1, fraction)));
+    }
+
+    function readBound(text, left) {
+      const raw = text.normalize('NFKC').trim().replace('−', '-').toLowerCase();
+      if (!raw || (left ? /^-?(?:∞|inf(?:inity)?)$/ : /^\+?(?:∞|inf(?:inity)?)$/).test(raw)) {
+        return left ? -Infinity : Infinity;
+      }
+      return numericValue(raw);
+    }
+
+    function fillSliderControls(container, bindings, onChange) {
+      container.replaceChildren();
+      container.hidden = !bindings.size;
+      const template = document.querySelector('#parameter-slider-template');
+      for (const [name, parameter] of bindings) {
+        const row = template.content.firstElementChild.cloneNode(true);
+        row.dataset.parameter = name;
+        const [value, lower, slider, upper] = row.querySelectorAll('input');
+        const label = row.querySelector('label');
+        const message = row.querySelector('.parameter-message');
+        value.id = 'slider-value-' + ++sliderLabelCount;
+        label.htmlFor = value.id;
+        label.textContent = name + ' 当前值';
+        lower.setAttribute('aria-label', name + ' 下限');
+        upper.setAttribute('aria-label', name + ' 上限');
+        slider.setAttribute('aria-label', name + ' 滑块');
+
+        function show(position = sliderPosition(parameter)) {
+          slider.value = position;
+          slider.style.setProperty('--progress', (100 * position / sliderSteps) + '%');
+          slider.setAttribute('aria-valuetext', String(parameter.value));
+          slider.disabled = parameter.lower === parameter.upper;
+          const values = [String(parameter.value),
+            parameter.lower === -Infinity ? '−∞' : String(parameter.lower),
+            parameter.upper === Infinity ? '+∞' : String(parameter.upper)];
+          for (const [index, input] of [value, lower, upper].entries()) {
+            input.defaultValue = values[index];
+            input.value = values[index];
+            input.removeAttribute('aria-invalid');
+          }
+          message.textContent = '';
+        }
+
+        function invalid(input, description) {
+          input.setAttribute('aria-invalid', 'true');
+          message.textContent = description;
+        }
+
+        function updateBound(input, left) {
+          const next = readBound(input.value, left);
+          if (!Number.isFinite(next) && next !== (left ? -Infinity : Infinity)) {
+            return invalid(input, '请输入有限数值或相应方向的 ∞。');
+          }
+          if (left ? next > parameter.upper : next < parameter.lower) return invalid(input, '下限须小于或等于上限。');
+          parameter[left ? 'lower' : 'upper'] = next;
+          parameter.value = Math.max(parameter.lower, Math.min(parameter.upper, parameter.value));
+          show();
+          onChange();
+        }
+
+        function updateValue() {
+          const next = numericValue(value.value);
+          if (!Number.isFinite(next) || next < parameter.lower || next > parameter.upper) {
+            return invalid(value, '请输入上下限内的有限数值。');
+          }
+          parameter.value = next;
+          show();
+          onChange();
+        }
+
+        for (const [input, update] of [[lower, () => updateBound(lower, true)], [upper, () => updateBound(upper, false)], [value, updateValue]]) {
+          const commit = () => { if (input.value !== input.defaultValue) update(); };
+          input.addEventListener('change', commit);
+          input.addEventListener('blur', commit);
+          input.addEventListener('keydown', event => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            commit();
+            input.blur();
+          });
+        }
+        slider.addEventListener('input', () => {
+          const position = Number(slider.value);
+          const next = sliderValue(position, parameter);
+          const endpoint = position === 0 && Number.isFinite(parameter.lower)
+            || position === sliderSteps && Number.isFinite(parameter.upper);
+          const rounded = endpoint ? next : Number(formatNumber(next));
+          parameter.value = Math.max(parameter.lower, Math.min(parameter.upper, Number.isFinite(rounded) ? rounded : next));
+          show(position);
+          onChange();
+        });
+        show();
+        container.append(row);
+      }
+    }
+
+    function lineTokens(source) {
+      return source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|sqrt|sin|cos|tan|pi|[^\s]/g) ?? [];
+    }
+
+    function parseAffine(source, bindings) {
+      const tokens = lineTokens(source);
       const constant = value => [value, 0, 0, 0];
       const scalar = terms => terms.slice(1).every(value => value === 0);
       const scale = (terms, factor) => terms.map(value => value * factor);
@@ -690,6 +871,7 @@
           return value;
         }
         if (token === 'pi' || token === 'π') return constant(Math.PI);
+        if (bindings?.has(token)) return constant(bindings.get(token).value);
         if (token && /^[xyt]$/.test(token)) {
           const terms = constant(0);
           terms[1 + 'xyt'.indexOf(token)] = 1;
@@ -728,12 +910,13 @@
         let value = signed();
         while (index < tokens.length) {
           const operator = tokens[index];
-          const implicit = /^(?:[a-z]+|[π√(])$/.test(operator);
+          const implicit = /^(?:[a-z]+|[α-ω√(])$/.test(operator);
           if (!implicit && operator !== '*' && operator !== '/') break;
           if (!implicit) index++;
           const next = signed();
           if (operator === '/') {
-            if (!scalar(next) || next[0] === 0) throw Error('分母须为非零常数。');
+            if (!scalar(next)) throw Error('分母须为非零常数。');
+            if (next[0] === 0) throw RangeError('分母不能为 0。');
             value = scale(value, 1 / next[0]);
           } else if (scalar(next)) value = scale(value, next[0]);
           else if (scalar(value)) value = scale(next, value[0]);
@@ -753,58 +936,76 @@
       }
 
       const terms = sum();
-      if (index !== tokens.length || !terms.every(Number.isFinite)) throw Error('请检查方程的符号和数值。');
+      if (index !== tokens.length) throw Error('请检查方程的符号。');
+      if (!terms.every(Number.isFinite)) throw RangeError('当前参数超出了方程的有效范围。');
       return terms;
     }
 
-    function equationTerms(equation) {
+    function equationTerms(equation, bindings) {
       const sides = equation.split('=');
       if (sides.length !== 2) throw Error('请输入带等号的直线方程。');
-      const left = parseAffine(sides[0]);
-      const right = parseAffine(sides[1]);
+      const left = parseAffine(sides[0], bindings);
+      const right = parseAffine(sides[1], bindings);
       return left.map((value, i) => value - right[i]);
     }
 
-    function parameterizedLine(xEquation, yEquation) {
-      const [x0, x, xy, dx] = equationTerms(xEquation);
-      const [y0, yx, y, dy] = equationTerms(yEquation);
-      if (!x || !y || xy || yx) throw Error('参数式须分别给出 x 和 y 关于 t 的一次式。');
+    function parameterizedLine(xEquation, yEquation, bindings) {
+      const [x0, x, xy, dx] = equationTerms(xEquation, bindings);
+      const [y0, yx, y, dy] = equationTerms(yEquation, bindings);
+      if (xy || yx) throw Error('参数式须分别给出 x 和 y 关于 t 的一次式。');
+      if (!x || !y) throw RangeError('当前参数下无法解出 x 或 y。');
       const vx = -dx / x;
       const vy = -dy / y;
       const speed = Math.hypot(vx, vy);
-      if (!speed || !Number.isFinite(speed)) throw Error('参数式的方向向量须为非零向量。');
+      if (!speed || !Number.isFinite(speed)) throw RangeError('参数式的方向向量须为非零向量。');
       const a = vy / speed;
       const b = -vx / speed;
       return [a, b, a * (x0 / x) + b * (y0 / y)];
     }
 
-    function parseLineEquation(raw) {
+    function normalizedLine(raw) {
       const source = raw.replace(/²/g, '^2').normalize('NFKC').toLowerCase()
         .replace(/[−–—]/g, '-').replace(/[×·⋅]/g, '*').replace(/÷/g, '/')
         .replace(/\\(?:left|right)/g, '').replace(/\\times|\\cdot/g, '*')
         .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '(($1)/($2))')
         .replace(/\\sqrt\{([^{}]+)\}/g, 'sqrt($1)')
-        .replace(/[{}]/g, '').replace(/[\[]/g, '(').replace(/[\]]/g, ')')
-        .replace(/(?:lambda|λ)/g, 't').trim();
+        .replace(/[{}]/g, '').replace(/[\[]/g, '(').replace(/[\]]/g, ')').trim();
+      const parametric = source.split('=').length === 3 || /^\(\s*x\s*,\s*y\s*\)\s*=/.test(source);
+      return { source: parametric ? source.replace(/(?:lambda|λ)/g, 't') : source, parametric };
+    }
+
+    function lineParameterNames(raw) {
+      const { source, parametric } = normalizedLine(raw);
+      if (/[a-z]{3,}\s*\(/.test(source)) {
+        for (const [run] of source.matchAll(/[a-z]{3,}(?=\s*\()/g)) {
+          if (!/^[a-z]{0,2}(?:sqrt|sin|cos|tan)$/.test(run)) throw Error('请输入单字母参数，或使用支持的数学函数。');
+        }
+      }
+      const reserved = parametric ? 'xytπ' : 'xyπ';
+      return [...new Set(lineTokens(source).filter(token => parameterLetter.test(token) && !reserved.includes(token)))];
+    }
+
+    function parseLineEquation(raw, bindings) {
+      const { source } = normalizedLine(raw);
       const vector = source.match(/^\(\s*x\s*,\s*y\s*\)\s*=\s*\(([^,]+),(.+)\)\s*([+-])\s*t\s*\*?\s*\(([^,]+),(.+)\)$/)
         ?? source.match(/^\(\s*x\s*,\s*y\s*\)\s*=\s*\(([^,]+),(.+)\)\s*([+-])\s*\(([^,]+),(.+)\)\s*\*?\s*t$/);
       let a, b, c;
       if (vector) {
         const [, x0, y0, sign, dx, dy] = vector;
-        [a, b, c] = parameterizedLine('x=(' + x0 + ')' + sign + 't*(' + dx + ')', 'y=(' + y0 + ')' + sign + 't*(' + dy + ')');
+        [a, b, c] = parameterizedLine('x=(' + x0 + ')' + sign + 't*(' + dx + ')', 'y=(' + y0 + ')' + sign + 't*(' + dy + ')', bindings);
       } else {
         const equations = source.split(/[;,\n]+/).map(value => value.trim()).filter(Boolean);
         if (equations.length === 2) {
           const [xEquation, yEquation] = /^\s*y\s*=/.test(equations[0]) ? equations.reverse() : equations;
-          [a, b, c] = parameterizedLine(xEquation, yEquation);
+          [a, b, c] = parameterizedLine(xEquation, yEquation, bindings);
         } else {
-          const [constant, x, y, t] = equationTerms(equations[0] ?? '');
+          const [constant, x, y, t] = equationTerms(equations[0] ?? '', bindings);
           if (t || equations.length !== 1) throw Error('参数式请同时输入 x 和 y 两个等式。');
           [a, b, c] = [x, y, constant];
         }
       }
       const length = Math.hypot(a, b);
-      if (!(length > 0) || !Number.isFinite(length) || !Number.isFinite(c / length)) throw Error('方程须表示一条可绘制的直线。');
+      if (!(length > 0) || !Number.isFinite(length) || !Number.isFinite(c / length)) throw RangeError('当前方程须表示一条可绘制的直线。');
       return { a: a / length, b: b / length, c: c / length };
     }
 
@@ -828,7 +1029,10 @@
     const drawingAnnotations = drawingPlot.querySelector('[data-layer="annotations"]');
     const equationDisplay = document.querySelector('#drawing-equation');
     const coordinates = document.querySelector('#drawing-coordinates');
+    const curveSliders = document.querySelector('#curve-sliders');
+    const curveParameterMessage = document.querySelector('#curve-parameter-message');
     const valuesByCurve = new Map();
+    const curvePrograms = new Map();
     const annotationsByView = new Map();
     let selection = null;
 
@@ -870,7 +1074,7 @@
       const height = drawingPlot.clientHeight;
       if (!model || !width || !height) return;
       const { id, axis, a, b, p, foci } = model;
-      const reference = selection.annotations.overlays.reduce((maximum, overlay) => Math.max(maximum, overlay.extent), model.reference);
+      const reference = selection.annotations.overlays.reduce((maximum, overlay) => Math.max(maximum, overlay.extent ?? 0), model.reference);
       const radius = Math.min(width, height) * .34;
       const toPixels = value => value / reference * radius;
       const toUnits = pixels => pixels / radius * reference;
@@ -992,6 +1196,7 @@
       geometry.overlays = new Map();
       drawingOverlays.replaceChildren();
       for (const overlay of annotations.overlays) {
+        if (!overlay.ready) continue;
         if (overlay.kind === 'line') {
           const line = graphLine(overlay, geometry);
           const [x1, y1] = line.at(line.low);
@@ -1123,7 +1328,7 @@
         targets.push(...circleConicCrossings(oval, base));
       }
       for (const overlay of annotations.overlays) {
-        if (overlay.id === point.overlay) continue;
+        if (!overlay.ready || overlay.id === point.overlay) continue;
         const other = geometry.overlays.get(overlay.id);
         if (overlay.kind === 'line') {
           targets.push(...ovalLineDistances(oval, other).map(other.at));
@@ -1413,12 +1618,87 @@
         item.className = 'geometry-item';
         const equation = document.createElement('p');
         equation.className = 'form-hint';
-        equation.textContent = overlay.equation;
+        const value = document.createElement('p');
+        value.className = 'form-hint';
+        const message = document.createElement('p');
+        message.className = 'form-hint parameter-message';
+        message.setAttribute('role', 'status');
+        const sliders = document.createElement('div');
+        sliders.className = 'parameter-sliders';
         const button = makeButton(line ? '直线上取点' : '圆上取点', 'tool-button', () => openNameDialog({ overlay }));
-        button.setAttribute('aria-description', overlay.equation);
-        item.append(equation, button);
+
+        function show() {
+          equation.textContent = overlay.formula ?? overlay.equation;
+          value.hidden = !overlay.formula || !overlay.ready || overlay.formula === overlay.equation;
+          value.textContent = overlay.equation ?? '';
+          message.textContent = overlay.error;
+          button.disabled = !overlay.ready;
+          button.setAttribute('aria-description', overlay.equation ?? overlay.formula);
+        }
+
+        fillSliderControls(sliders, overlay.bindings, () => {
+          if (evaluateOverlay(overlay, true)) renderDrawing();
+          show();
+        });
+        show();
+        item.append(equation, value, sliders, message, button);
         return item;
       }));
+    }
+
+    function lineDisplay({ a, b, c }) {
+      if (b === 0) return 'x = ' + formatNumber(-c / a);
+      const slope = -a / b;
+      const intercept = -c / b;
+      if (!Number.isFinite(slope) || !Number.isFinite(intercept)) {
+        return `${formatNumber(a)}x + (${formatNumber(b)})y = ${formatNumber(-c)}`;
+      }
+      if (slope === 0) return 'y = ' + formatNumber(intercept);
+      return 'y = ' + formatNumber(slope) + 'x' + (intercept === 0 ? ''
+        : (intercept < 0 ? ' − ' : ' + ') + formatNumber(Math.abs(intercept)));
+    }
+
+    function circleDisplay(a, b, r) {
+      const shift = (variable, value) => value === 0 ? `${variable}²` : `(${variable} ${value < 0 ? '+' : '−'} ${formatNumber(Math.abs(value))})²`;
+      return `${shift('x', a)} + ${shift('y', b)} = ${formatNumber(r)}²`;
+    }
+
+    function overlayData(overlay) {
+      if (overlay.kind === 'line') {
+        const data = parseLineEquation(overlay.source, overlay.bindings);
+        return { ...data, extent: Math.abs(data.c), equation: overlay.bindings.size ? lineDisplay(data) : overlay.source };
+      }
+      const [a, b, r] = valuesForFields(overlay.fields, overlay.bindings);
+      const extent = Math.max(Math.abs(a), Math.abs(b)) + r;
+      if (!Number.isFinite(extent) || !(r > 0)) throw RangeError('圆的半径须大于 0，且参数须在可绘制范围内。');
+      return { a, b, r, extent, equation: circleDisplay(a, b, r) };
+    }
+
+    function evaluateOverlay(overlay, adjusting = false) {
+      try {
+        Object.assign(overlay, overlayData(overlay), { ready: true, error: '' });
+        return true;
+      } catch (error) {
+        if ((!adjusting && !(error instanceof RangeError)) || !overlay.bindings.size) throw error;
+        overlay.error = error.message + (overlay.ready ? ' 当前保留上一次有效图形。' : ' 调整滑块后绘制。');
+        return false;
+      }
+    }
+
+    function buildOverlay(kind) {
+      if (kind === 'line') {
+        const source = lineEquation.value.trim();
+        const names = lineParameterNames(source);
+        const bindings = makeBindings(names, names.map(() => 1));
+        return { kind, source, bindings, formula: bindings.size ? source : '' };
+      }
+      const fields = circleFields.map((field, i) => parameterField(field, ['圆心横坐标：', '圆心纵坐标：', '半径：'][i]));
+      // A shared symbol used as the radius needs a positive starting value.
+      const initial = fields.map((field, i) => i === 2 || (field.name && field.name === fields[2].name) ? 1 : 0);
+      const bindings = fieldBindings(fields, initial);
+      const [a, b, r] = fields.map(field => field.text);
+      const formula = bindings.size ? `(x − (${a}))² + (y − (${b}))² = (${r})²` : '';
+      return { kind, fields, bindings, formula };
     }
 
     function openGeometryDialog(kind) {
@@ -1441,25 +1721,17 @@
     document.querySelector('#geometry-form').addEventListener('input', () => { geometryError.textContent = ''; });
     document.querySelector('#geometry-form').addEventListener('submit', event => {
       event.preventDefault();
-      let data;
+      let overlay;
       try {
-        if (overlayKind === 'line') {
-          const equation = lineEquation.value.trim();
-          const coefficients = parseLineEquation(equation);
-          data = { ...coefficients, extent: Math.abs(coefficients.c), equation };
-        } else {
-          const [a, b, r] = circleFields.map(readNumber);
-          const extent = Math.max(Math.abs(a), Math.abs(b)) + r;
-          if (!Number.isFinite(extent) || !(r > 0)) throw Error('请输入有限的圆心坐标和大于 0 的半径。');
-          const shift = (variable, value) => value === 0 ? `${variable}²` : `(${variable} ${value < 0 ? '+' : '−'} ${formatNumber(Math.abs(value))})²`;
-          data = { a, b, r, extent, equation: `${shift('x', a)} + ${shift('y', b)} = ${formatNumber(r)}²` };
-        }
+        overlay = buildOverlay(overlayKind);
+        evaluateOverlay(overlay);
       } catch (error) {
         geometryError.textContent = error.message;
         return;
       }
       const { overlays } = selection.annotations;
-      overlays.push({ ...data, kind: overlayKind, id: overlays.length + 1 });
+      overlay.id = overlays.length + 1;
+      overlays.push(overlay);
       geometryDialog.close();
       renderDrawing();
       renderGeometryTools();
@@ -1604,33 +1876,72 @@
       field.focus();
     }
 
-    form.addEventListener('input', clearError);
+    function validateCurve(id, axis, a, b) {
+      const isParabola = id === 'parabola';
+      if (!Number.isFinite(a) || (isParabola ? a === 0 : a <= 0)) {
+        return { field: aField, error: isParabola ? '二次项系数须为非零有限数值。' : '参数 a 须大于 0。' };
+      }
+      if (!Number.isFinite(b) || (!isParabola && b <= 0)) {
+        return { field: bField, error: isParabola ? '顶点坐标须为有限数值。' : '参数 b 须大于 0。' };
+      }
+      if (id === 'ellipse' && b > a) return { field: bField, error: 'b 不能大于 a，否则焦点会落在另一条轴上。' };
+      const model = getDrawingModel(id, axis, a, b);
+      const shapeSize = isParabola ? Math.abs(model.p) : Math.min(a, b);
+      if (!Number.isFinite(model.reference) || shapeSize / model.reference === 0) {
+        return { field: aField, error: '参数超出了坐标图可表示的范围，请缩小参数的数量级差异。' };
+      }
+      return { model };
+    }
+
+    function applyCurveValues(program, result) {
+      program.error = result.error ? result.error + ' 当前保留上一次有效图形。' : '';
+      curveParameterMessage.textContent = program.error;
+      if (!result.model) return;
+      selection.model = result.model;
+      valuesByCurve.set(selection.id, [result.model.a, result.model.b]);
+      showDrawingDetails(result.model);
+      renderDrawing();
+      updateAnnotationTools();
+    }
+
+    function renderCurveSliders(program) {
+      curveParameterMessage.textContent = program?.error ?? '';
+      fillSliderControls(curveSliders, program?.bindings ?? new Map(), () => {
+        const [a, b] = valuesForFields(program.fields, program.bindings);
+        applyCurveValues(program, validateCurve(selection.id, selection.axis, a, b));
+      });
+    }
+
+    form.addEventListener('input', event => {
+      if (event.target === aField || event.target === bField) clearError();
+    });
     form.addEventListener('submit', event => {
       event.preventDefault();
       clearError();
       const { id, axis } = selection;
-      const a = readNumber(aField);
-      const b = readNumber(bField);
-      const isParabola = id === 'parabola';
-      if (!Number.isFinite(a) || (isParabola ? a === 0 : a <= 0)) {
-        return fieldError(aField, isParabola ? '请输入非零的有限数值 a。' : '请输入大于 0 的有限数值 a。');
+      const fields = [];
+      for (const [index, input] of [aField, bField].entries()) {
+        try {
+          fields.push(parameterField(input, '参数 ' + ['a', 'b'][index] + '：'));
+        } catch (error) {
+          return fieldError(input, error.message);
+        }
       }
-      if (!Number.isFinite(b) || (!isParabola && b <= 0)) {
-        return fieldError(bField, isParabola ? '请输入有限数值 b。' : '请输入大于 0 的有限数值 b。');
+      const initial = [selection.model.a, selection.model.b];
+      if (id === 'ellipse') {
+        if (!fields[1].name && fields[1].value > 0) initial[0] = Math.max(initial[0], fields[1].value);
+        if (!fields[0].name && fields[0].value > 0) initial[1] = Math.min(initial[1], fields[0].value);
       }
-      if (id === 'ellipse' && b > a) return fieldError(bField, 'b 不能大于 a，否则焦点会落在另一条轴上。');
-      const model = getDrawingModel(id, axis, a, b);
-      const shapeSize = isParabola ? Math.abs(model.p) : Math.min(a, b);
-      if (!Number.isFinite(model.reference) || shapeSize / model.reference === 0) {
-        return fieldError(aField, '参数超出了坐标图可表示的范围，请缩小参数的数量级差异。');
-      }
-      selection.model = model;
-      valuesByCurve.set(id, [a, b]);
+      const bindings = fieldBindings(fields, initial, curvePrograms.get(id)?.bindings);
+      const program = { fields, bindings, error: '' };
+      const [a, b] = valuesForFields(fields, bindings);
+      const result = validateCurve(id, axis, a, b);
+      if (result.error && !bindings.size) return fieldError(result.field, result.error);
+      curvePrograms.set(id, program);
       aField.blur();
       bField.blur();
-      showDrawingDetails(model);
-      renderDrawing();
-      updateAnnotationTools();
+      renderCurveSliders(program);
+      applyCurveValues(program, result);
     });
 
     for (const field of [aField, bField]) {
@@ -1668,6 +1979,7 @@
       }
       if (view === 'drawing') {
         const [a, b] = valuesByCurve.get(id) ?? config.initial;
+        const program = curvePrograms.get(id);
         const annotationKey = `${id}/${axis}`;
         if (!annotationsByView.has(annotationKey)) {
           annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null });
@@ -1681,10 +1993,11 @@
         document.querySelector('#label-a').textContent = config.labels[0];
         document.querySelector('#label-b').textContent = config.labels[1];
         document.querySelector('#drawing-asymptote').hidden = id !== 'hyperbola';
-        aField.value = String(a);
-        bField.value = String(b);
+        aField.value = program?.fields[0].text ?? String(a);
+        bField.value = program?.fields[1].text ?? String(b);
         aField.nextElementSibling.hidden = bField.nextElementSibling.hidden = id !== 'parabola';
         clearError();
+        renderCurveSliders(program);
         showDrawingDetails(selection.model);
         renderDrawing();
         renderGeometryTools();
