@@ -1,0 +1,1130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f6f1">
+  <meta name="description" content="输入参数绘制椭圆、双曲线和抛物线，或拖动滑块比较离心率对曲线的影响。">
+  <title>圆锥曲线实验室</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172722;
+      --muted: #50605a;
+      --border: #dbe3dc;
+      font: 100%/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f4f6f1;
+      color: var(--ink);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid var(--accent, #08775c); outline-offset: 3px; }
+    .shell { width: min(1200px, calc(100% - 72px)); margin-inline: auto; }
+    .masthead { border-bottom: 1px solid #dce3da; }
+    .masthead .shell { min-height: 63px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .93rem; font-weight: 700; color: inherit; text-decoration: none; }
+    .brand-mark { width: 33px; height: 33px; padding: 5px; border-radius: 10px; background: #153d32; color: #d2f7ce; }
+    .definition { color: var(--muted); font-size: .875rem; }
+    .math { font-family: Georgia, "Times New Roman", serif; }
+    .definition .math { color: var(--ink); font-size: 1.05rem; margin-inline-end: .35em; }
+    .intro { padding: 35px 0 26px; }
+    h1 { margin: 0 0 9px; font-size: clamp(1.85rem, 4vw, 3.4rem); line-height: 1.16; letter-spacing: -.045em; }
+    .intro p { margin: 0; color: var(--muted); font-size: 1rem; }
+    .panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .panel {
+      --accent: #08775c;
+      --strong: #075a47;
+      --tint: #e5f5ec;
+      --paper: #f2f9f4;
+      --grid: #dcebe2;
+      --axis: #77928a;
+      --focus: #174e41;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 20px;
+      min-width: 0;
+      box-shadow: 0 4px 16px #20332908;
+    }
+    .panel[data-curve="hyperbola"] {
+      --accent: #5245ac;
+      --strong: #46398d;
+      --tint: #eeebfd;
+      --paper: #f7f5fe;
+      --grid: #e8e3f3;
+      --axis: #8f87a8;
+      --focus: #443783;
+    }
+    .panel-header, .controls-heading, .range-labels, .panel-footer {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .panel-header { margin-bottom: 15px; }
+    h2 { margin: 0; font-size: 1.43rem; line-height: 1.2; }
+    .domain { color: var(--strong); background: var(--tint); padding: 3px 10px 4px; border-radius: 8px; white-space: nowrap; }
+    .plot { display: block; width: 100%; height: clamp(225px, 29vw, 327px); background: var(--paper); border: 1px solid var(--grid); border-radius: 14px; }
+    .grid { stroke: var(--grid); stroke-width: 1; }
+    .axis { stroke: var(--axis); stroke-width: 1.1; }
+    .tick { fill: var(--muted); font-size: 11px; }
+    .axis-name { fill: var(--muted); font: italic 15px Georgia, serif; }
+    .curve { fill: none; stroke: var(--accent); stroke-width: 3.3; stroke-linecap: round; stroke-linejoin: round; }
+    .interior { fill: var(--accent); opacity: .08; }
+    .asymptote { stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 5 5; opacity: .62; }
+    .focus { fill: var(--focus); stroke: white; stroke-width: 1.5; }
+    .focus-label { fill: var(--focus); font: italic 600 13px Georgia, serif; paint-order: stroke; stroke: var(--paper); stroke-width: 4px; }
+    .legend { min-height: 38px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 16px; font-size: .875rem; color: var(--muted); }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { display: inline-block; width: 13px; border-top: 3px solid var(--accent); border-radius: 2px; }
+    .legend .dot { width: 7px; height: 7px; border: 0; background: var(--focus); border-radius: 50%; }
+    .legend .dashed { border-top: 2px dashed var(--accent); border-radius: 0; }
+    .controls { border-top: 1px solid var(--border); padding: 13px 0 11px; }
+    .controls label { font-weight: 700; }
+    output { color: var(--strong); font-size: 1.48rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+    input[type="range"] { display: block; width: 100%; height: 44px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: ew-resize; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 7px; border-radius: 10px; background: linear-gradient(to right, var(--accent) var(--progress), var(--tint) var(--progress)); }
+    input[type="range"]::-moz-range-track { height: 7px; border-radius: 10px; background: linear-gradient(to right, var(--accent) var(--progress), var(--tint) var(--progress)); }
+    input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 28px; height: 28px; margin-top: -10.5px; border: 3px solid white; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 5px #19282648; }
+    input[type="range"]::-moz-range-thumb { box-sizing: border-box; width: 28px; height: 28px; border: 3px solid white; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 5px #19282648; }
+    .range-labels { margin-top: -4px; color: var(--muted); font-size: .875rem; }
+    .panel-footer { flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border); }
+    .equation { display: flex; align-items: center; gap: .3em; margin: 0; font-size: 1.19rem; white-space: nowrap; }
+    .fraction { display: inline-grid; min-width: 1.65em; text-align: center; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .fraction span:first-child { border-bottom: 1px solid currentColor; padding: 0 4px 2px; }
+    .fraction span:last-child { padding-top: 2px; }
+    .actions { display: flex; gap: 6px; margin-inline-start: auto; }
+    .actions button { min-height: 44px; border-radius: 9px; padding: 0 11px; background: white; border: 1px solid var(--border); color: var(--muted); font-size: .875rem; font-weight: 650; }
+    .actions .play { min-width: 95px; background: var(--tint); color: var(--strong); border-color: transparent; }
+    .actions button:active { box-shadow: inset 0 0 0 1px currentColor; }
+    .observations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 18px 0 32px; color: var(--muted); font-size: .875rem; }
+    .observations p { margin: 0; padding-inline: 4px; }
+    .observations strong { color: var(--ink); }
+    .back-link { display: inline-flex; align-items: center; min-height: 44px; margin: 10px 0 0; color: #075a47; font-weight: 650; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+    .back-link + .intro { padding-top: 10px; }
+    .intro h1:focus { outline: none; }
+    .tile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding-bottom: 26px; }
+    .tile {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 130px; padding: 17px 20px; background: #fff; color: var(--ink);
+      border: 1px solid var(--border); border-radius: 18px; text-decoration: none;
+    }
+    .tile:hover, .tile:active { border-color: var(--accent, #08775c); }
+    .tile-title { display: block; font-size: 1.32rem; font-weight: 750; margin-bottom: 5px; }
+    .tile-copy { color: var(--muted); font-size: .93rem; }
+    .tile-art { flex: 0 0 clamp(66px, 12vw, 125px); width: clamp(66px, 12vw, 125px); height: 82px; padding: 8px; border-radius: 11px; color: var(--accent, #08775c); background: var(--paper, #f2f9f4); }
+    .tile-art .axes { opacity: .34; }
+    [data-curve="hyperbola"].tile { --accent: #5245ac; --paper: #f7f5fe; }
+    [data-curve="parabola"].tile, .panel[data-curve="parabola"] {
+      --accent: #aa4e22; --strong: #873a16; --tint: #fbeddf; --paper: #fff7ef;
+      --grid: #eee1d6; --axis: #a78e7f; --focus: #813b1d;
+    }
+    .drawing-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 340px); gap: 16px; align-items: start; padding-bottom: 26px; }
+    .drawing-layout .plot { height: clamp(260px, 39vw, 472px); }
+    .drawing-side { display: grid; gap: 14px; min-width: 0; }
+    #drawing-panel { position: sticky; top: 12px; }
+    .drawing-equation { font-size: clamp(1.05rem, 2.25vw, 1.55rem); line-height: 1.4; margin-top: 6px; overflow-wrap: anywhere; }
+    .coordinates { margin: 5px 0 0; color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    .vertex { fill: var(--paper); stroke: var(--accent); stroke-width: 1.7; }
+    .legend .vertex-key { width: 8px; height: 8px; border: 1.5px solid var(--accent); border-radius: 50%; }
+    .parameter-form { display: grid; gap: 13px; }
+    .parameter-form h2 { font-size: 1.2rem; }
+    .form-hint { margin: 0; font-size: .875rem; color: var(--muted); }
+    .field label { display: block; margin-bottom: 5px; font-weight: 650; }
+    .field-row { display: flex; gap: 6px; }
+    .field input { width: 100%; min-width: 0; min-height: 46px; padding: 8px 11px; color: var(--ink); background: #fff; border: 1px solid #a7b4ae; border-radius: 8px; font-variant-numeric: tabular-nums; }
+    .field input[aria-invalid="true"] { border-color: #aa382b; }
+    .sign-button { border: 1px solid var(--border); border-radius: 8px; background: var(--paper); color: var(--strong); min-width: 44px; }
+    .draw-button { min-height: 46px; border: 0; border-radius: 8px; color: #fff; background: var(--accent); font-weight: 700; }
+    .form-error { margin: -4px 0 0; color: #9a3126; font-size: .875rem; }
+    .form-error:empty { display: none; }
+    .annotation-tools { display: grid; gap: 11px; }
+    .annotation-tools h2, .name-dialog h2 { font-size: 1.2rem; }
+    .vertex-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .tool-button, .erase-button { min-height: 44px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--ink); }
+    .tool-button:not(:disabled):hover { border-color: var(--accent, #08775c); }
+    .tool-button[aria-pressed="true"], .tool-button[aria-expanded="true"] {
+      background: var(--tint, #e5f5ec); border-color: var(--accent, #08775c); color: var(--strong, #075a47); font-weight: 700;
+    }
+    .tool-button:disabled { cursor: default; color: #738079; background: #f2f4f1; }
+    .point-picker { display: grid; gap: 8px; padding: 9px; background: var(--paper); border-radius: 9px; }
+    .point-buttons, .segment-buttons, .dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .point-buttons button { min-width: 44px; overflow-wrap: anywhere; }
+    .erase-button { text-align: left; color: #853b27; overflow-wrap: anywhere; }
+    .segment-line { stroke: #a74732; stroke-width: 2.1; stroke-linecap: round; }
+    .annotation-point { fill: var(--accent); stroke: white; stroke-width: 1.6; }
+    .drag-handle, .drag-target { touch-action: none; cursor: grab; }
+    .drag-handle:active, .drag-target:active { cursor: grabbing; }
+    .annotation-name { pointer-events: none; font-size: 15px; stroke-width: 4.5px; }
+    .endpoint-ring { fill: none; stroke: #a74732; stroke-width: 2; pointer-events: none; }
+    .name-dialog { width: min(420px, calc(100% - 32px)); max-height: calc(100% - 24px); padding: 20px; color: var(--ink); border: 1px solid var(--border); border-radius: 16px; }
+    .name-dialog::backdrop { background: #13292278; }
+    .name-dialog form { display: grid; gap: 12px; }
+    .dialog-actions { justify-content: flex-end; }
+    .dialog-actions .draw-button { padding: 0 14px; background: #08775c; }
+    @media (max-width: 920px) {
+      .shell { width: calc(100% - 40px); }
+      .panel { padding: 15px; }
+      .panels, .observations { gap: 14px; }
+    }
+    @media (max-width: 670px) {
+      .shell { width: calc(100% - 28px); }
+      .intro { padding: 26px 0 19px; }
+      .panels, .observations { grid-template-columns: minmax(0, 1fr); }
+      .plot { height: clamp(225px, 62vw, 322px); }
+      .drawing-layout { grid-template-columns: minmax(0, 1fr); }
+      .drawing-layout .plot { height: clamp(230px, 67vw, 408px); }
+      #drawing-panel { position: static; }
+    }
+    @media (max-width: 430px) {
+      .tile-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+      .tile { min-height: 94px; padding-block: 10px; }
+      .tile-art { width: 89px; flex-basis: 89px; height: 68px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell">
+      <a class="brand" href="#home">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M2 12h20M12 2v20" stroke="currentColor" opacity=".38"/>
+          <ellipse cx="12" cy="12" rx="9" ry="5.4" transform="rotate(-32 12 12)" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="9" cy="14" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/>
+        </svg>
+        圆锥曲线实验室
+      </a>
+      <div class="definition" id="eccentricity-definition" hidden><span class="math"><i>e</i> = <i>c</i>/<i>a</i></span> 离心率</div>
+    </div>
+  </header>
+  <main class="shell">
+    <section id="home-view">
+      <div class="intro">
+        <h1 tabindex="-1">探索圆锥曲线</h1>
+        <p>选择曲线，设置焦点所在的轴和参数，再查看坐标图。</p>
+      </div>
+      <nav class="tile-grid" id="home-links" aria-label="实验入口"></nav>
+    </section>
+    <section id="axis-view" hidden>
+      <a class="back-link" href="#home">返回首页</a>
+      <div class="intro">
+        <h1 tabindex="-1"></h1>
+        <p>选择焦点所在的坐标轴。</p>
+      </div>
+      <nav class="tile-grid" id="axis-links" aria-label="选择焦点轴"></nav>
+    </section>
+    <section id="drawing-view" hidden>
+      <a class="back-link" id="back-to-axes">重新选择焦点轴</a>
+      <div class="intro">
+        <h1 tabindex="-1"></h1>
+        <p id="drawing-orientation"></p>
+      </div>
+      <div class="drawing-layout">
+        <section class="panel" id="drawing-panel" aria-label="曲线坐标图">
+          <svg class="plot" id="drawing-plot" xmlns="http://www.w3.org/2000/svg" role="img">
+            <title></title>
+            <g data-layer="grid"></g>
+            <g data-layer="segments"></g>
+            <g data-layer="curve"></g>
+            <g data-layer="foci"></g>
+            <g data-layer="annotations"></g>
+          </svg>
+          <div class="legend">
+            <span><i></i>曲线</span>
+            <span><i class="dot"></i>焦点</span>
+            <span id="drawing-asymptote" hidden><i class="dashed"></i>渐近线</span>
+            <span id="drawing-vertex" hidden><i class="vertex-key"></i>顶点</span>
+          </div>
+          <div class="drawing-equation math" id="drawing-equation" role="math" aria-live="polite"></div>
+          <p class="coordinates" id="drawing-coordinates"></p>
+        </section>
+        <div class="drawing-side">
+        <form class="panel parameter-form" id="parameter-form" novalidate>
+          <h2>绘图参数</h2>
+          <p class="form-hint" id="parameter-hint"></p>
+          <div class="field">
+            <label for="parameter-a" id="label-a"></label>
+            <div class="field-row"><input id="parameter-a" inputmode="decimal" enterkeyhint="go" autocomplete="off" spellcheck="false" aria-describedby="parameter-hint form-error"><button class="sign-button" type="button" aria-label="切换 a 的正负号">±</button></div>
+          </div>
+          <div class="field">
+            <label for="parameter-b" id="label-b"></label>
+            <div class="field-row"><input id="parameter-b" inputmode="decimal" enterkeyhint="go" autocomplete="off" spellcheck="false" aria-describedby="parameter-hint form-error"><button class="sign-button" type="button" aria-label="切换 b 的正负号">±</button></div>
+          </div>
+          <p class="form-error" id="form-error" role="alert"></p>
+          <button class="draw-button" type="submit">绘制图像</button>
+        </form>
+        <section class="panel annotation-tools" id="annotation-tools" aria-labelledby="annotation-heading">
+          <h2 id="annotation-heading">点与线段</h2>
+          <div class="vertex-buttons">
+            <button class="tool-button" type="button" data-vertex="left" aria-pressed="false">左顶点</button>
+            <button class="tool-button" type="button" data-vertex="right" aria-pressed="false">右顶点</button>
+            <button class="tool-button" type="button" data-vertex="top" aria-pressed="false">上顶点</button>
+            <button class="tool-button" type="button" data-vertex="bottom" aria-pressed="false">下顶点</button>
+          </div>
+          <p class="form-hint" id="vertex-hint" hidden></p>
+          <button class="tool-button" id="add-curve-point" type="button"></button>
+          <p class="form-hint" id="drag-hint" hidden>拖动图上的取点标记，点会沿曲线移动。</p>
+          <button class="tool-button" id="connect-points" type="button" aria-expanded="false" aria-controls="point-picker">连接线段</button>
+          <div class="point-picker" id="point-picker" hidden>
+            <p class="form-hint" id="point-instruction" aria-live="polite"></p>
+            <div class="point-buttons" id="point-buttons"></div>
+          </div>
+          <div class="segment-buttons" id="segment-buttons"></div>
+        </section>
+        </div>
+      </div>
+    </section>
+    <section id="eccentricity-view" hidden>
+    <a class="back-link" href="#home">返回首页</a>
+    <div class="intro">
+      <h1 tabindex="-1">离心率如何改变曲线？</h1>
+      <p>固定 <span class="math"><i>a</i> = 2</span>。分别拖动滑块或播放动画，观察曲线与焦点的位置变化。</p>
+    </div>
+    <div class="panels" id="panels"></div>
+    <div class="observations">
+      <p><strong>椭圆</strong>　<em>e</em> 从 0 增大时，曲线由圆逐渐压扁，两个焦点逐渐分开。</p>
+      <p><strong>双曲线</strong>　<em>e</em> 增大时，每一支的开口变宽，渐近线变得更陡。</p>
+    </div>
+    </section>
+  </main>
+  <dialog class="name-dialog" id="point-name-dialog" aria-labelledby="point-name-heading">
+    <form id="point-name-form">
+      <h2 id="point-name-heading"></h2>
+      <div class="field">
+        <label for="point-name-input">点的名称</label>
+        <input id="point-name-input" maxlength="20" autocomplete="off" spellcheck="false" aria-describedby="point-name-error">
+      </div>
+      <p class="form-error" id="point-name-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="tool-button" id="cancel-point-name" type="button">取消</button>
+        <button class="tool-button" id="default-point-name" type="button"></button>
+        <button class="draw-button" type="submit">确定</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="panel-template">
+    <section class="panel">
+      <header class="panel-header"><h2></h2><span class="domain math"></span></header>
+      <svg class="plot" xmlns="http://www.w3.org/2000/svg" role="img">
+        <title></title>
+        <g data-layer="grid"></g>
+        <g data-layer="curve"></g>
+        <g data-layer="foci"></g>
+      </svg>
+      <div class="legend">
+        <span><i></i>曲线</span>
+        <span><i class="dot"></i>焦点</span>
+        <span data-asymptote><i class="dashed"></i>渐近线</span>
+      </div>
+      <div class="controls">
+        <div class="controls-heading">
+          <label>离心率 <i class="math">e</i></label>
+          <output aria-live="off"></output>
+        </div>
+        <input type="range" step="0.01">
+        <div class="range-labels"><span></span><span></span></div>
+      </div>
+      <div class="panel-footer">
+        <p class="equation math" role="math">
+          <span class="fraction" aria-hidden="true"><span><i>x</i>²</span><span>4</span></span>
+          <span class="operator" aria-hidden="true"></span>
+          <span class="fraction" aria-hidden="true"><span><i>y</i>²</span><span data-b-squared></span></span>
+          <span aria-hidden="true">= 1</span>
+        </p>
+        <div class="actions">
+          <button class="play" type="button">播放动画</button>
+          <button class="reset" type="button">重置</button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <script>
+    'use strict';
+
+    const transverseRadius = 2;
+    const curves = [
+      { id: 'ellipse', name: '椭圆', domain: '0 ≤ e < 1', min: 0, max: .99, initial: .55, sign: '+' },
+      { id: 'hyperbola', name: '双曲线', domain: 'e > 1', min: 1.01, max: 2.20, initial: 1.45, sign: '−' },
+    ];
+    const svgNamespace = 'http://www.w3.org/2000/svg';
+    const stopComparisonAnimations = [];
+
+    function svgElement(name, attributes, content = '') {
+      const element = document.createElementNS(svgNamespace, name);
+      for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+      if (content) element.textContent = content;
+      return element;
+    }
+
+    function drawGrid(layer, width, height, unit, tickValue = 1) {
+      const halfWidth = width / 2;
+      const halfHeight = height / 2;
+      layer.replaceChildren();
+      for (let n = 1; n * unit < halfWidth - 8; n++) {
+        for (const side of [-1, 1]) {
+          const x = side * n * unit;
+          layer.append(svgElement('line', { class: 'grid', x1: x, x2: x, y1: -halfHeight, y2: halfHeight }));
+          if (n % 2 === 0) layer.append(svgElement('text', { class: 'tick', x, y: 15, 'text-anchor': 'middle' }, formatNumber(side * n * tickValue)));
+        }
+      }
+      for (let n = 1; n * unit < halfHeight - 8; n++) {
+        for (const side of [-1, 1]) {
+          const y = side * n * unit;
+          layer.append(svgElement('line', { class: 'grid', x1: -halfWidth, x2: halfWidth, y1: y, y2: y }));
+          if (n % 2 === 0) layer.append(svgElement('text', { class: 'tick', x: -8, y: y + 4, 'text-anchor': 'end' }, formatNumber(-side * n * tickValue)));
+        }
+      }
+      layer.append(
+        svgElement('line', { class: 'axis', x1: -halfWidth, x2: halfWidth, y1: 0, y2: 0 }),
+        svgElement('line', { class: 'axis', x1: 0, x2: 0, y1: -halfHeight, y2: halfHeight }),
+        svgElement('text', { class: 'axis-name', x: halfWidth - 16, y: -9 }, 'x'),
+        svgElement('text', { class: 'axis-name', x: 8, y: 20 - halfHeight }, 'y')
+      );
+    }
+
+    function drawHyperbola(layer, a, b, width, height) {
+      const horizontalLimit = width / 2 + 4;
+      const verticalLimit = height / 2 + 4;
+      const slope = b / a;
+      const lineX = Math.min(horizontalLimit, verticalLimit / slope);
+      const lineY = Math.min(verticalLimit, slope * horizontalLimit);
+      for (const sign of [-1, 1]) {
+        layer.append(svgElement('line', {
+          class: 'asymptote', x1: -lineX, x2: lineX,
+          y1: sign * lineY, y2: -sign * lineY,
+        }));
+      }
+      const run = Math.sqrt(Math.max(0, horizontalLimit ** 2 - a ** 2));
+      const visibleRun = Math.min(run, verticalLimit * a / b);
+      const visibleRise = Math.min(verticalLimit, run * b / a);
+      const pointAt = (t, side) => [side * Math.hypot(a, visibleRun * t), -visibleRise * t];
+      for (const side of [-1, 1]) {
+        const points = [];
+        for (let i = 0; i <= 120; i++) {
+          const t = 2 * i / 120 - 1;
+          points.push(pointAt(t, side).map(coordinate => coordinate.toFixed(2)).join(','));
+        }
+        layer.append(svgElement('polyline', { class: 'curve', points: points.join(' ') }));
+      }
+      return pointAt;
+    }
+
+    function drawFoci(layer, c, width) {
+      layer.replaceChildren();
+      if (c === 0) {
+        layer.append(
+          svgElement('circle', { class: 'focus', cx: 0, cy: 0, r: 4.7 }),
+          svgElement('text', { class: 'focus-label', x: 0, y: -10, 'text-anchor': 'middle' }, 'F₁ = F₂')
+        );
+        return;
+      }
+      for (const side of [-1, 1]) {
+        const x = side * c;
+        const labelSide = width / 2 - c < 26 ? -side : side;
+        layer.append(
+          svgElement('circle', { class: 'focus', cx: x, cy: 0, r: 4.7 }),
+          svgElement('text', {
+            class: 'focus-label', x: x + labelSide * 4, y: -10,
+            'text-anchor': labelSide === -1 ? 'end' : 'start',
+          }, side === -1 ? 'F₁' : 'F₂')
+        );
+      }
+    }
+
+    function createPanel(config) {
+      const panel = document.querySelector('#panel-template').content.firstElementChild.cloneNode(true);
+      panel.dataset.curve = config.id;
+      const heading = panel.querySelector('h2');
+      heading.id = `${config.id}-heading`;
+      heading.textContent = config.name;
+      panel.setAttribute('aria-labelledby', heading.id);
+      panel.querySelector('.domain').textContent = config.domain;
+      const isEllipse = config.id === 'ellipse';
+      if (isEllipse) panel.querySelector('[data-asymptote]').remove();
+
+      const slider = panel.querySelector('input');
+      const readout = panel.querySelector('output');
+      slider.id = `${config.id}-e`;
+      slider.min = config.min;
+      slider.max = config.max;
+      panel.querySelector('label').htmlFor = slider.id;
+      readout.setAttribute('for', slider.id);
+      const [minimumLabel, maximumLabel] = panel.querySelector('.range-labels').children;
+      minimumLabel.textContent = isEllipse ? '0.00（圆）' : config.min.toFixed(2);
+      maximumLabel.textContent = config.max.toFixed(2);
+      const play = panel.querySelector('.play');
+      const reset = panel.querySelector('.reset');
+      const plot = panel.querySelector('.plot');
+      const plotTitle = plot.querySelector('title');
+      const grid = plot.querySelector('[data-layer="grid"]');
+      const curve = plot.querySelector('[data-layer="curve"]');
+      const foci = plot.querySelector('[data-layer="foci"]');
+      const equation = panel.querySelector('.equation');
+      const denominator = panel.querySelector('[data-b-squared]');
+      panel.querySelector('.operator').textContent = config.sign;
+      let width = 0;
+      let height = 0;
+      let unit = 0;
+      let frame = null;
+      let direction = 1;
+      let displayed = -1;
+
+      function draw(value) {
+        if (!unit) return;
+        const a = transverseRadius * unit;
+        const b = a * Math.sqrt(Math.abs(1 - value * value));
+        curve.replaceChildren();
+        if (isEllipse) {
+          curve.append(
+            svgElement('ellipse', { class: 'interior', rx: a, ry: b }),
+            svgElement('ellipse', { class: 'curve', rx: a, ry: b })
+          );
+        } else {
+          drawHyperbola(curve, a, b, width, height);
+        }
+        drawFoci(foci, a * value, width);
+      }
+
+      function render(value) {
+        slider.value = value.toFixed(2);
+        const e = Number(slider.value);
+        if (e === displayed) return;
+        displayed = e;
+        const progress = 100 * (e - config.min) / (config.max - config.min);
+        slider.style.setProperty('--progress', `${progress}%`);
+        readout.value = e.toFixed(2);
+        plotTitle.textContent = `${config.name}坐标图，离心率 ${readout.value}`;
+        denominator.textContent = (transverseRadius ** 2 * Math.abs(1 - e * e)).toFixed(2);
+        const operator = isEllipse ? '加' : '减';
+        equation.setAttribute('aria-label', `x 的平方除以 4，${operator} y 的平方除以约 ${denominator.textContent}，等于 1`);
+        draw(e);
+      }
+
+      function stop() {
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null;
+        play.textContent = '播放动画';
+      }
+      stopComparisonAnimations.push(stop);
+
+      function start() {
+        let position = Number(slider.value);
+        if (position >= config.max) direction = -1;
+        if (position <= config.min) direction = 1;
+        let lastTime = null;
+        play.textContent = '暂停动画';
+        function advance(time) {
+          if (lastTime !== null) {
+            const elapsed = Math.min(time - lastTime, 50);
+            position += direction * elapsed * (config.max - config.min) / 3800;
+            if (position >= config.max || position <= config.min) {
+              position = Math.max(config.min, Math.min(config.max, position));
+              direction *= -1;
+            }
+            render(position);
+          }
+          lastTime = time;
+          frame = requestAnimationFrame(advance);
+        }
+        frame = requestAnimationFrame(advance);
+      }
+
+      slider.addEventListener('input', () => {
+        stop();
+        render(Number(slider.value));
+      });
+      play.addEventListener('click', () => {
+        if (frame === null) start();
+        else stop();
+      });
+      reset.addEventListener('click', () => {
+        stop();
+        direction = 1;
+        render(config.initial);
+      });
+      const resize = new ResizeObserver(([entry]) => {
+        ({ width, height } = entry.contentRect);
+        if (!width || !height) return;
+        unit = Math.min(width / 9.8, height / 6.8);
+        plot.setAttribute('viewBox', `${-width / 2} ${-height / 2} ${width} ${height}`);
+        drawGrid(grid, width, height, unit);
+        draw(Number(slider.value));
+      });
+      resize.observe(plot);
+      render(config.initial);
+      return panel;
+    }
+
+    document.querySelector('#panels').append(...curves.map(createPanel));
+
+    const drawingConfigs = {
+      ellipse: {
+        name: '椭圆', detail: '输入半长轴和半短轴', initial: [4, 2],
+        labels: ['半长轴 a', '半短轴 b'], hint: 'a ≥ b > 0，a 在所选轴上。a = b 时是圆，两个焦点重合。',
+        icon: 'M19 40a41 23 0 1 0 82 0 41 23 0 1 0-82 0',
+      },
+      hyperbola: {
+        name: '双曲线', detail: '输入实半轴和虚半轴', initial: [3, 2],
+        labels: ['实半轴 a', '虚半轴 b'], hint: 'a 和 b 都要大于 0，实轴沿所选坐标轴。',
+        icon: 'M3 13Q55 40 3 67M117 13Q65 40 117 67',
+      },
+      parabola: {
+        name: '抛物线', detail: '输入开口系数和顶点位置', initial: [.25, 0],
+        labels: ['二次项系数 a', '顶点在焦点轴上的坐标 b'],
+        hint: 'a ≠ 0，正负号决定开口方向。b 可取 0、正数或负数，用来沿所选轴移动顶点。',
+        icon: 'M104 9Q-56 40 104 71',
+      },
+    };
+    const comparisonIcon = 'M16 40a44 28 0 1 0 88 0 44 28 0 1 0-88 0M16 40a44 12 0 1 0 88 0 44 12 0 1 0-88 0';
+
+    function makeTile({ href, title, detail, id, icon, vertical = false }) {
+      const tile = document.createElement('a');
+      tile.className = 'tile';
+      tile.href = href;
+      tile.dataset.curve = id;
+      const text = document.createElement('span');
+      const name = document.createElement('strong');
+      const description = document.createElement('span');
+      name.className = 'tile-title';
+      name.textContent = title;
+      description.className = 'tile-copy';
+      description.textContent = detail;
+      text.append(name, description);
+      const preview = svgElement('svg', { class: 'tile-art', viewBox: '0 0 120 80', 'aria-hidden': 'true' });
+      const shape = svgElement('path', { d: icon, fill: 'none', stroke: 'currentColor', 'stroke-width': 2.7, 'stroke-linecap': 'round' });
+      if (vertical) shape.setAttribute('transform', 'translate(60 40) scale(.68) rotate(-90) translate(-60 -40)');
+      preview.append(svgElement('path', { class: 'axes', d: 'M5 40h110M60 5v70', stroke: 'currentColor' }), shape);
+      tile.append(text, preview);
+      return tile;
+    }
+
+    const homeLinks = document.querySelector('#home-links');
+    homeLinks.append(
+      makeTile({ href: '#eccentricity', title: '离心率', detail: '比较椭圆和双曲线的离心率动画', id: 'eccentricity', icon: comparisonIcon }),
+      ...Object.entries(drawingConfigs).map(([id, config]) => makeTile({
+        href: `#${id}`, title: config.name, detail: config.detail, id, icon: config.icon,
+      }))
+    );
+
+    function formatNumber(value) {
+      return String(Number(value.toPrecision(9)));
+    }
+
+    function readNumber(field) {
+      const raw = field.value.normalize('NFKC').trim().replace('−', '-').replace(',', '.');
+      return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) ? Number(raw) : NaN;
+    }
+
+    const views = {
+      home: document.querySelector('#home-view'),
+      axis: document.querySelector('#axis-view'),
+      drawing: document.querySelector('#drawing-view'),
+      eccentricity: document.querySelector('#eccentricity-view'),
+    };
+    const form = document.querySelector('#parameter-form');
+    const aField = document.querySelector('#parameter-a');
+    const bField = document.querySelector('#parameter-b');
+    const formError = document.querySelector('#form-error');
+    const drawingPanel = document.querySelector('#drawing-panel');
+    const drawingPlot = document.querySelector('#drawing-plot');
+    const drawingGrid = drawingPlot.querySelector('[data-layer="grid"]');
+    const drawingSegments = drawingPlot.querySelector('[data-layer="segments"]');
+    const drawingCurve = drawingPlot.querySelector('[data-layer="curve"]');
+    const drawingFoci = drawingPlot.querySelector('[data-layer="foci"]');
+    const drawingAnnotations = drawingPlot.querySelector('[data-layer="annotations"]');
+    const equationDisplay = document.querySelector('#drawing-equation');
+    const coordinates = document.querySelector('#drawing-coordinates');
+    const valuesByCurve = new Map();
+    const annotationsByView = new Map();
+    let selection = null;
+
+    function formatPoint(onAxis, axis) {
+      const value = formatNumber(onAxis);
+      return axis === 'x' ? `(${value}, 0)` : `(0, ${value})`;
+    }
+
+    function showDrawingDetails(model) {
+      const { id, axis, cross, a, b, foci } = model;
+      const equation = id === 'parabola'
+        ? `${axis} = ${formatNumber(a)}${cross}²${b === 0 ? '' : ` ${b < 0 ? '−' : '+'} ${formatNumber(Math.abs(b))}`}`
+        : `${axis}² / (${formatNumber(a)})² ${id === 'ellipse' ? '+' : '−'} ${cross}² / (${formatNumber(b)})² = 1`;
+      equationDisplay.textContent = equation.replace(/^([xy] = )-/, '$1−');
+      drawingPlot.querySelector('title').textContent = `${drawingConfigs[id].name}，焦点在 ${axis} 轴，${equation}`;
+      const labels = foci.map(({ position, label }) => `${label}${formatPoint(position, axis)}`);
+      if (id === 'parabola') labels.push(`顶点 ${formatPoint(b, axis)}`);
+      coordinates.textContent = labels.join('　·　');
+    }
+
+    function getDrawingModel(id, axis, a, b) {
+      const cross = axis === 'x' ? 'y' : 'x';
+      if (id === 'parabola') {
+        const p = .25 / a;
+        const focus = b + p;
+        return { id, axis, cross, a, b, p, foci: [{ position: focus, label: 'F' }], reference: Math.max(Math.abs(b), Math.abs(p), Math.abs(focus)) };
+      }
+      const ratio = b / a;
+      const c = id === 'ellipse' ? a * Math.sqrt((1 - ratio) * (1 + ratio)) : Math.hypot(a, b);
+      const foci = c === 0 ? [{ position: 0, label: 'F₁ = F₂' }] : [
+        { position: -c, label: 'F₁' }, { position: c, label: 'F₂' },
+      ];
+      return { id, axis, cross, a, b, foci, reference: Math.max(a, b, c) };
+    }
+
+    function renderDrawing() {
+      const model = selection?.model;
+      const width = drawingPlot.clientWidth;
+      const height = drawingPlot.clientHeight;
+      if (!model || !width || !height) return;
+      const { id, axis, a, b, p, foci, reference } = model;
+      const radius = Math.min(width, height) * .34;
+      const toPixels = value => value / reference * radius;
+      const rawStep = 35 / radius * reference;
+      const magnitude = 10 ** Math.floor(Math.log10(rawStep)) || Number.MIN_VALUE;
+      const tickValue = [1, 2, 5, 10].map(multiplier => magnitude * multiplier).find(step => step >= rawStep) ?? magnitude;
+      const gridUnit = toPixels(tickValue);
+      drawingPlot.setAttribute('viewBox', `${-width / 2} ${-height / 2} ${width} ${height}`);
+      drawGrid(drawingGrid, width, height, Number.isFinite(gridUnit) && gridUnit >= 16 ? gridUnit : 35, tickValue);
+      drawingCurve.replaceChildren();
+      drawingFoci.replaceChildren();
+
+      const vertical = axis === 'y';
+      const project = vertical ? ([x, y]) => [-y, -x] : point => point;
+      const geometry = svgElement('g', vertical ? { transform: 'matrix(0 -1 -1 0 0 0)' } : {});
+      drawingCurve.append(geometry);
+      const axialSize = vertical ? height : width;
+      const crossSize = vertical ? width : height;
+      let pointAt;
+      if (id === 'ellipse') {
+        const size = { rx: toPixels(a), ry: toPixels(b) };
+        geometry.append(svgElement('ellipse', { ...size, class: 'interior' }), svgElement('ellipse', { ...size, class: 'curve' }));
+        pointAt = t => [size.rx * Math.cos(Math.PI * t), -size.ry * Math.sin(Math.PI * t)];
+      } else if (id === 'hyperbola') {
+        pointAt = drawHyperbola(geometry, toPixels(a), toPixels(b), axialSize, crossSize);
+      } else {
+        const vertex = toPixels(b);
+        const direction = Math.sign(p);
+        const pPixels = Math.abs(toPixels(p));
+        const axialLimit = axialSize / 2 + 4 - direction * vertex;
+        const transverseLimit = Math.min(crossSize / 2 + 4, 2 * Math.sqrt(pPixels * axialLimit));
+        pointAt = t => {
+          const crossPixel = transverseLimit * t;
+          return [vertex + direction * (crossPixel / (2 * Math.sqrt(pPixels))) ** 2, crossPixel];
+        };
+        const points = [];
+        for (let i = 0; i <= 160; i++) {
+          points.push(pointAt(2 * i / 160 - 1).map(coordinate => coordinate.toFixed(2)).join(','));
+        }
+        geometry.append(svgElement('polyline', { class: 'curve', points: points.join(' ') }));
+      }
+
+      for (const { position, label } of foci) {
+        const [cx, cy] = project([toPixels(position), 0]);
+        const placeBefore = label === 'F₁';
+        drawingFoci.append(
+          svgElement('circle', { cx, cy, r: 4.7, class: 'focus' }),
+          svgElement('text', {
+            x: cx + (placeBefore ? -8 : 8), y: cy + (vertical ? -4 : -9), class: 'focus-label',
+            'text-anchor': placeBefore ? 'end' : 'start',
+          }, label)
+        );
+      }
+      selection.geometry = { width, height, project, toPixels, pointAt };
+      renderAnnotations();
+    }
+
+    const vertexDirections = ['left', 'right', 'top', 'bottom'];
+    const vertexNames = {
+      x: { left: 'A₁', right: 'A₂', top: 'B₂', bottom: 'B₁' },
+      y: { left: 'B₁', right: 'B₂', top: 'A₂', bottom: 'A₁' },
+    };
+    const vertexButtons = document.querySelectorAll('[data-vertex]');
+    const vertexHint = document.querySelector('#vertex-hint');
+    const addPointButton = document.querySelector('#add-curve-point');
+    const connectButton = document.querySelector('#connect-points');
+    const pointPicker = document.querySelector('#point-picker');
+    const pointInstruction = document.querySelector('#point-instruction');
+    const pointButtons = document.querySelector('#point-buttons');
+    const segmentButtons = document.querySelector('#segment-buttons');
+    const nameDialog = document.querySelector('#point-name-dialog');
+    const nameHeading = document.querySelector('#point-name-heading');
+    const nameInput = document.querySelector('#point-name-input');
+    const nameError = document.querySelector('#point-name-error');
+    const defaultNameButton = document.querySelector('#default-point-name');
+    let nameRequest = null;
+    let drag = null;
+
+    function availableVertices(model) {
+      const { id, axis, a, b, p } = model;
+      if (id === 'parabola') {
+        const direction = axis === 'x' ? (p > 0 ? 'left' : 'right') : (p > 0 ? 'bottom' : 'top');
+        return [{ direction, id: 'vertex-apex', position: axis === 'x' ? [b, 0] : [0, b] }];
+      }
+      const xRadius = axis === 'x' ? a : b;
+      const yRadius = axis === 'y' ? a : b;
+      const positions = { left: [-xRadius, 0], right: [xRadius, 0], top: [0, yRadius], bottom: [0, -yRadius] };
+      const directions = id === 'ellipse' ? vertexDirections : axis === 'x' ? ['left', 'right'] : ['top', 'bottom'];
+      return directions.map(direction => ({ direction, id: `vertex-${direction}`, position: positions[direction] }));
+    }
+
+    function endpointCatalog() {
+      const { model, annotations } = selection;
+      const mergedFoci = model.id === 'ellipse' && model.foci.length === 1;
+      const endpoints = model.foci.map(({ position, label }, index) => ({
+        id: `focus-${index}`, label, onAxis: position, visible: true, kind: 'focus',
+      }));
+      if (mergedFoci) endpoints.push({ ...endpoints[0], id: 'focus-1', visible: false });
+      for (const vertex of availableVertices(model)) {
+        const mark = annotations.vertices.get(vertex.id);
+        if (mark) endpoints.push({ ...vertex, ...mark, kind: 'vertex' });
+      }
+      return endpoints.concat(annotations.points.map(point => ({ ...point, visible: true, kind: 'curve' })));
+    }
+
+    function renderAnnotations() {
+      const { annotations, geometry } = selection;
+      if (!geometry) return;
+      const { width, height, project, toPixels, pointAt } = geometry;
+      drawingSegments.replaceChildren();
+      drawingAnnotations.replaceChildren();
+      const endpoints = endpointCatalog().map(endpoint => {
+        let location;
+        if (endpoint.kind === 'focus') location = project([toPixels(endpoint.onAxis), 0]);
+        else if (endpoint.kind === 'vertex') location = [toPixels(endpoint.position[0]), -toPixels(endpoint.position[1])];
+        else location = project(pointAt(endpoint.t, endpoint.side));
+        return { ...endpoint, location };
+      });
+      const byId = new Map(endpoints.map(endpoint => [endpoint.id, endpoint]));
+      for (const { first, second } of annotations.segments) {
+        const [x1, y1] = byId.get(first).location;
+        const [x2, y2] = byId.get(second).location;
+        drawingSegments.append(svgElement('line', { class: 'segment-line', x1, y1, x2, y2 }));
+      }
+      for (const { id, label, location: [x, y], kind, visible, direction } of endpoints) {
+        if (!visible) continue;
+        if (kind !== 'focus') {
+          const vertex = kind === 'vertex';
+          const marker = svgElement('g', vertex ? {} : { class: 'drag-handle', 'data-point-id': id });
+          if (!vertex) marker.append(svgElement('circle', { cx: x, cy: y, r: 22, fill: 'transparent', class: 'drag-target' }));
+          marker.append(svgElement('circle', { cx: x, cy: y, r: vertex ? 4.8 : 5.8, class: vertex ? 'vertex' : 'annotation-point' }));
+          const textWidth = Math.min(width * .4, label.length * 8);
+          const horizontalVertex = direction === 'left' || direction === 'right';
+          const avoidFocus = vertex && !horizontalVertex && (direction === 'top' || selection.id === 'parabola');
+          const labelOnLeft = x + textWidth + 12 > width / 2 || ((x < 0 || avoidFocus) && x - textWidth - 12 > -width / 2);
+          const labelBelow = horizontalVertex || y < -height / 2 + 26;
+          marker.append(svgElement('text', {
+            class: 'focus-label annotation-name',
+            x: x + (labelOnLeft ? -8 : 8),
+            y: y + (labelBelow ? 18 : -10),
+            'text-anchor': labelOnLeft ? 'end' : 'start',
+          }, label));
+          drawingAnnotations.append(marker);
+        }
+        if (id === annotations.pending) {
+          drawingAnnotations.append(svgElement('circle', { cx: x, cy: y, r: 9, class: 'endpoint-ring' }));
+        }
+      }
+    }
+
+    function makeButton(label, className, onClick) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = className;
+      button.textContent = label;
+      button.addEventListener('click', onClick);
+      return button;
+    }
+
+    function updateAnnotationTools(message = '') {
+      const { id, model, annotations } = selection;
+      const vertices = availableVertices(model);
+      for (const button of vertexButtons) {
+        const vertex = vertices.find(item => item.direction === button.dataset.vertex);
+        button.disabled = !vertex;
+        button.setAttribute('aria-pressed', String(Boolean(vertex && annotations.vertices.get(vertex.id)?.visible)));
+      }
+      vertexHint.hidden = id === 'ellipse';
+      vertexHint.textContent = id === 'hyperbola' ? '双曲线只有实轴上的两个顶点。' : '抛物线只有一个顶点，所在方向随开口改变。';
+      document.querySelector('#drawing-vertex').hidden = !vertices.some(vertex => annotations.vertices.get(vertex.id)?.visible);
+      addPointButton.textContent = `${drawingConfigs[id].name}上取点`;
+      document.querySelector('#drag-hint').hidden = annotations.points.length === 0;
+      pointPicker.hidden = !annotations.connecting;
+      connectButton.setAttribute('aria-expanded', String(annotations.connecting));
+      const endpoints = endpointCatalog();
+      const enabled = endpoints.filter(endpoint => endpoint.visible);
+      const byId = new Map(endpoints.map(endpoint => [endpoint.id, endpoint]));
+      if (!enabled.some(endpoint => endpoint.id === annotations.pending)) annotations.pending = null;
+      const first = byId.get(annotations.pending);
+      pointInstruction.textContent = message || (first
+        ? `已选 ${first.label}，请选择第二个点。`
+        : enabled.length < 2 ? '再标出一个点即可连接。' : '依次选择两个点。');
+      pointButtons.replaceChildren(...enabled.map(endpoint => {
+        const button = makeButton(endpoint.label, 'tool-button', () => selectEndpoint(endpoint.id));
+        button.dataset.endpoint = endpoint.id;
+        button.setAttribute('aria-pressed', String(endpoint.id === annotations.pending));
+        return button;
+      }));
+      segmentButtons.replaceChildren(...annotations.segments.map(segment => {
+        const pair = [byId.get(segment.first).label, byId.get(segment.second).label].join('—');
+        return makeButton(`擦除线段 ${pair}`, 'erase-button', () => {
+          annotations.segments = annotations.segments.filter(item => item !== segment);
+          updateAnnotationTools(`已擦除线段 ${pair}。`);
+          connectButton.focus({ preventScroll: true });
+        });
+      }));
+      renderAnnotations();
+    }
+
+    function selectEndpoint(id) {
+      const { annotations } = selection;
+      const first = annotations.pending;
+      let message = '';
+      if (!first || first === id) annotations.pending = first ? null : id;
+      else {
+        const exists = annotations.segments.some(segment =>
+          (segment.first === first && segment.second === id) || (segment.first === id && segment.second === first));
+        if (!exists) annotations.segments.push({ first, second: id });
+        else message = '这条线段已经绘制。请选择另外两个点。';
+        annotations.pending = null;
+      }
+      updateAnnotationTools(message);
+      const button = [...pointButtons.children].find(item => item.dataset.endpoint === id);
+      button?.focus({ preventScroll: true });
+    }
+
+    function openNameDialog(request) {
+      nameRequest = request;
+      nameHeading.textContent = request.vertex ? `命名${request.title}` : '命名曲线上的点';
+      nameInput.value = '';
+      nameInput.removeAttribute('aria-invalid');
+      nameError.textContent = '';
+      defaultNameButton.hidden = !request.defaultName;
+      defaultNameButton.textContent = request.defaultName ? `使用默认名 ${request.defaultName}` : '';
+      defaultNameButton.toggleAttribute('autofocus', Boolean(request.defaultName));
+      nameInput.toggleAttribute('autofocus', !request.defaultName);
+      nameDialog.showModal();
+    }
+
+    function formatPointName(raw) {
+      return raw.trim().replace(/_([0-9]+)/g, (_, digits) => [...digits].map(digit => '₀₁₂₃₄₅₆₇₈₉'[Number(digit)]).join(''));
+    }
+
+    function savePointName(raw) {
+      const { vertex } = nameRequest;
+      const { annotations } = selection;
+      const label = formatPointName(raw);
+      const duplicate = endpointCatalog().some(endpoint => endpoint.id !== vertex?.id && endpoint.label === label);
+      if (!label || duplicate) {
+        nameError.textContent = !label ? '请输入点的名称。' : '这个名称已被使用，请换一个。';
+        nameInput.setAttribute('aria-invalid', 'true');
+        nameInput.focus();
+        return;
+      }
+      if (vertex) annotations.vertices.set(vertex.id, { label, visible: true });
+      else {
+        const index = annotations.nextPoint++;
+        const t = ((.68 + index * .61803398875) % 1 - .5) * 1.8;
+        annotations.points.push({ id: `curve-${index}`, label, t, side: index % 2 ? -1 : 1 });
+      }
+      nameDialog.close();
+      updateAnnotationTools();
+    }
+
+    for (const button of vertexButtons) {
+      button.addEventListener('click', () => {
+        const direction = button.dataset.vertex;
+        const vertex = availableVertices(selection.model).find(item => item.direction === direction);
+        const mark = selection.annotations.vertices.get(vertex.id);
+        if (mark?.visible) {
+          mark.visible = false;
+          updateAnnotationTools();
+          return;
+        }
+        openNameDialog({ vertex, title: button.textContent, defaultName: vertexNames[selection.axis][direction] });
+      });
+    }
+    addPointButton.addEventListener('click', () => openNameDialog({}));
+    connectButton.addEventListener('click', () => {
+      const { annotations } = selection;
+      annotations.connecting = !annotations.connecting;
+      annotations.pending = null;
+      updateAnnotationTools();
+    });
+    defaultNameButton.addEventListener('click', () => savePointName(nameRequest.defaultName));
+    document.querySelector('#cancel-point-name').addEventListener('click', () => nameDialog.close());
+    document.querySelector('#point-name-form').addEventListener('submit', event => {
+      event.preventDefault();
+      savePointName(nameInput.value);
+    });
+    nameInput.addEventListener('input', () => {
+      nameError.textContent = '';
+      nameInput.removeAttribute('aria-invalid');
+    });
+
+    function nearestCurveParameter(point, x, y) {
+      const { model, geometry: { project, pointAt } } = selection;
+      const limit = model.id === 'ellipse' ? 1 : .95;
+      const distance = t => {
+        const [px, py] = project(pointAt(t, point.side));
+        return (px - x) ** 2 + (py - y) ** 2;
+      };
+      const step = 2 * limit / 100;
+      let best = -limit;
+      let bestDistance = Infinity;
+      for (let i = 0; i <= 100; i++) {
+        const t = -limit + i * step;
+        const squaredDistance = distance(t);
+        if (squaredDistance < bestDistance) {
+          bestDistance = squaredDistance;
+          best = t;
+        }
+      }
+      let left = Math.max(-limit, best - step);
+      let right = Math.min(limit, best + step);
+      for (let i = 0; i < 15; i++) {
+        const lower = left + (right - left) / 3;
+        const upper = right - (right - left) / 3;
+        if (distance(lower) < distance(upper)) right = upper;
+        else left = lower;
+      }
+      return (left + right) / 2;
+    }
+
+    drawingPlot.addEventListener('pointerdown', event => {
+      const handle = event.target.closest('[data-point-id]');
+      if (!handle || drag || event.button !== 0) return;
+      const point = selection.annotations.points.find(item => item.id === handle.dataset.pointId);
+      const transform = drawingPlot.getScreenCTM()?.inverse();
+      if (!transform) return;
+      const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform);
+      const { project, pointAt } = selection.geometry;
+      const [pointX, pointY] = project(pointAt(point.t, point.side));
+      drag = { pointerId: event.pointerId, point, dx: pointX - pointer.x, dy: pointY - pointer.y };
+      drawingPlot.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    drawingPlot.addEventListener('pointermove', event => {
+      if (drag?.pointerId !== event.pointerId || !selection?.geometry) return;
+      const transform = drawingPlot.getScreenCTM()?.inverse();
+      if (!transform) return;
+      const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform);
+      drag.point.t = nearestCurveParameter(drag.point, pointer.x + drag.dx, pointer.y + drag.dy);
+      renderAnnotations();
+    });
+    for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      drawingPlot.addEventListener(eventName, event => {
+        if (drag?.pointerId === event.pointerId) drag = null;
+      });
+    }
+
+    function clearError() {
+      formError.textContent = '';
+      aField.removeAttribute('aria-invalid');
+      bField.removeAttribute('aria-invalid');
+    }
+
+    function fieldError(field, message) {
+      formError.textContent = message;
+      field.setAttribute('aria-invalid', 'true');
+      field.focus();
+    }
+
+    form.addEventListener('input', clearError);
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      clearError();
+      const { id, axis } = selection;
+      const a = readNumber(aField);
+      const b = readNumber(bField);
+      const isParabola = id === 'parabola';
+      if (!Number.isFinite(a) || (isParabola ? a === 0 : a <= 0)) {
+        return fieldError(aField, isParabola ? '请输入非零的有限数值 a。' : '请输入大于 0 的有限数值 a。');
+      }
+      if (!Number.isFinite(b) || (!isParabola && b <= 0)) {
+        return fieldError(bField, isParabola ? '请输入有限数值 b。' : '请输入大于 0 的有限数值 b。');
+      }
+      if (id === 'ellipse' && b > a) return fieldError(bField, 'b 不能大于 a，否则焦点会落在另一条轴上。');
+      const model = getDrawingModel(id, axis, a, b);
+      const shapeSize = isParabola ? Math.abs(model.p) : Math.min(a, b);
+      if (!Number.isFinite(model.reference) || shapeSize / model.reference === 0) {
+        return fieldError(aField, '参数超出了坐标图可表示的范围，请缩小参数的数量级差异。');
+      }
+      selection.model = model;
+      valuesByCurve.set(id, [a, b]);
+      aField.blur();
+      bField.blur();
+      showDrawingDetails(model);
+      renderDrawing();
+      updateAnnotationTools();
+    });
+
+    for (const field of [aField, bField]) {
+      field.nextElementSibling.addEventListener('click', () => {
+        const raw = field.value.trim();
+        field.value = /^[-−]/.test(raw) ? raw.slice(1) : `-${raw.replace(/^\+/, '')}`;
+        clearError();
+        field.focus();
+      });
+    }
+
+    const drawingResize = new ResizeObserver(renderDrawing);
+    drawingResize.observe(drawingPlot);
+
+    function renderRoute(moveFocus = true) {
+      if (nameDialog.open) nameDialog.close();
+      drag = null;
+      const [id, axis, ...rest] = location.hash.slice(1).split('/');
+      const config = Object.prototype.hasOwnProperty.call(drawingConfigs, id) ? drawingConfigs[id] : null;
+      let view = 'home';
+      if (id === 'eccentricity' && !axis) view = 'eccentricity';
+      if (config && !axis) view = 'axis';
+      if (config && ['x', 'y'].includes(axis) && !rest.length) view = 'drawing';
+      if (view !== 'eccentricity') stopComparisonAnimations.forEach(stop => stop());
+      for (const [name, section] of Object.entries(views)) section.hidden = name !== view;
+      document.querySelector('#eccentricity-definition').hidden = view !== 'eccentricity';
+
+      if (view === 'axis') {
+        views.axis.querySelector('h1').textContent = config.name;
+        document.querySelector('#axis-links').replaceChildren(...['x', 'y'].map(name => makeTile({
+          href: `#${id}/${name}`, title: `焦点在 ${name} 轴`, detail: `沿 ${name} 轴绘制`,
+          id, icon: config.icon, vertical: name === 'y',
+        })));
+      }
+      if (view === 'drawing') {
+        const [a, b] = valuesByCurve.get(id) ?? config.initial;
+        const annotationKey = `${id}/${axis}`;
+        if (!annotationsByView.has(annotationKey)) {
+          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], nextPoint: 0, connecting: false, pending: null });
+        }
+        selection = { id, axis, model: getDrawingModel(id, axis, a, b), annotations: annotationsByView.get(annotationKey) };
+        views.drawing.querySelector('h1').textContent = `${config.name}绘图`;
+        document.querySelector('#drawing-orientation').textContent = `焦点在 ${axis} 轴`;
+        document.querySelector('#back-to-axes').href = `#${id}`;
+        drawingPanel.dataset.curve = form.dataset.curve = document.querySelector('#annotation-tools').dataset.curve = id;
+        document.querySelector('#parameter-hint').textContent = config.hint;
+        document.querySelector('#label-a').textContent = config.labels[0];
+        document.querySelector('#label-b').textContent = config.labels[1];
+        document.querySelector('#drawing-asymptote').hidden = id !== 'hyperbola';
+        aField.value = String(a);
+        bField.value = String(b);
+        aField.nextElementSibling.hidden = bField.nextElementSibling.hidden = id !== 'parabola';
+        clearError();
+        showDrawingDetails(selection.model);
+        renderDrawing();
+        updateAnnotationTools();
+      } else {
+        selection = null;
+      }
+
+      if (moveFocus) {
+        window.scrollTo(0, 0);
+        views[view].querySelector('h1').focus({ preventScroll: true });
+      }
+    }
+
+    window.addEventListener('hashchange', () => renderRoute());
+    renderRoute(false);
+  </script>
+</body>
+</html>
