@@ -174,6 +174,8 @@
     .segment-line { stroke: #a74732; stroke-width: 2.1; stroke-linecap: round; }
     .overlay-line, .overlay-circle { fill: none; stroke-width: 2.1; }
     .overlay-line { stroke: #6952a3; }
+    .overlay-line.is-selected { stroke-width: 3.1; }
+    .overlay-line-hit { stroke: transparent; stroke-width: 22; pointer-events: stroke; cursor: pointer; }
     .overlay-circle { stroke: #a06016; }
     .annotation-point[data-shape="line"] { fill: #6952a3; }
     .annotation-point[data-shape="circle"] { fill: #a06016; }
@@ -281,6 +283,7 @@
           <div class="drawing-equation math" id="drawing-equation" role="math" aria-live="polite"></div>
           <p class="coordinates" id="drawing-coordinates"></p>
           <p class="coordinates" id="drawing-directrix" hidden></p>
+          <p class="coordinates drawing-equation" id="selected-line-equation" role="status" hidden></p>
         </section>
         <div class="drawing-side">
         <form class="panel parameter-form" id="parameter-form" novalidate>
@@ -329,6 +332,7 @@
             <button class="tool-button" id="add-circle" type="button">添加圆</button>
           </div>
           <div class="geometry-objects" id="geometry-objects"></div>
+          <p class="form-hint" id="line-tap-hint" hidden>点按图中的直线可查看方程。</p>
         </section>
         </div>
       </div>
@@ -365,10 +369,19 @@
   <dialog class="name-dialog" id="geometry-dialog" aria-labelledby="geometry-dialog-heading">
     <form id="geometry-form" novalidate>
       <h2 id="geometry-dialog-heading"></h2>
+      <div class="geometry-actions" id="line-source-options" role="group" aria-label="直线绘制方式" hidden>
+        <button class="tool-button" type="button" id="line-from-equation" aria-pressed="true">输入方程</button>
+        <button class="tool-button" type="button" id="line-from-points" aria-pressed="false">选取已有点</button>
+      </div>
       <div class="field" id="line-fields">
         <label for="line-equation">直线方程</label>
         <input id="line-equation" maxlength="300" autocomplete="off" spellcheck="false" placeholder="2x − y = 3" aria-describedby="line-examples geometry-error">
         <p class="form-hint" id="line-examples">例如 y=2x+1、y=kx+b、x/2+y/3=1、x=1+2t; y=3−t。</p>
+      </div>
+      <div class="point-picker" id="line-point-picker" hidden>
+        <p class="form-hint">选 1 个点可联动调节斜率和截距，选 2 个点则由两点确定直线。</p>
+        <div class="point-buttons" id="line-point-buttons" aria-label="可选点"></div>
+        <p class="form-hint" id="line-point-summary" role="status"></p>
       </div>
       <div class="field" id="circle-fields">
         <p class="form-hint">圆心 (a, b) 和半径 r 可填数值或算式，例如 m+2。半径须大于 0。</p>
@@ -910,6 +923,7 @@
     function fillSliderControls(container, bindings, onChange) {
       container.replaceChildren();
       container.hidden = !bindings.size;
+      const refresh = [];
       const template = document.querySelector('#parameter-slider-template');
       for (const [name, parameter] of bindings) {
         const row = template.content.firstElementChild.cloneNode(true);
@@ -928,13 +942,14 @@
           slider.value = position;
           slider.style.setProperty('--progress', (100 * position / sliderSteps) + '%');
           slider.setAttribute('aria-valuetext', String(parameter.value));
-          slider.disabled = parameter.lower === parameter.upper;
+          slider.disabled = Boolean(parameter.locked) || parameter.lower === parameter.upper;
           const values = [String(parameter.value),
             parameter.lower === -Infinity ? '−∞' : String(parameter.lower),
             parameter.upper === Infinity ? '+∞' : String(parameter.upper)];
           for (const [index, input] of [value, lower, upper].entries()) {
             input.defaultValue = values[index];
             input.value = values[index];
+            input.disabled = Boolean(parameter.locked);
             input.removeAttribute('aria-invalid');
           }
           message.textContent = '';
@@ -954,7 +969,7 @@
           parameter[left ? 'lower' : 'upper'] = next;
           parameter.value = Math.max(parameter.lower, Math.min(parameter.upper, parameter.value));
           show();
-          onChange();
+          onChange(name);
         }
 
         function updateValue() {
@@ -964,7 +979,7 @@
           }
           parameter.value = next;
           show();
-          onChange();
+          onChange(name);
         }
 
         for (const [input, update] of [[lower, () => updateBound(lower, true)], [upper, () => updateBound(upper, false)], [value, updateValue]]) {
@@ -986,11 +1001,13 @@
           const rounded = endpoint ? next : Number(formatNumber(next));
           parameter.value = Math.max(parameter.lower, Math.min(parameter.upper, Number.isFinite(rounded) ? rounded : next));
           show(position);
-          onChange();
+          onChange(name);
         });
         show();
+        refresh.push(show);
         container.append(row);
       }
+      return () => refresh.forEach(show => show());
     }
 
     function lineTokens(source) {
@@ -1214,11 +1231,13 @@
     const equationDisplay = document.querySelector('#drawing-equation');
     const coordinates = document.querySelector('#drawing-coordinates');
     const directrixDisplay = document.querySelector('#drawing-directrix');
+    const selectedLineDisplay = document.querySelector('#selected-line-equation');
     const curveSliders = document.querySelector('#curve-sliders');
     const curveParameterMessage = document.querySelector('#curve-parameter-message');
     const valuesByCurve = new Map();
     const curvePrograms = new Map();
     const annotationsByView = new Map();
+    const overlayViews = new WeakMap();
     let selection = null;
 
     function formatPoint(onAxis, axis) {
@@ -1401,7 +1420,12 @@
       const { geometry, annotations } = selection;
       geometry.overlays = new Map();
       drawingOverlays.replaceChildren();
+      const endpoints = new Map(endpointCatalog().map(endpoint => [endpoint.id, endpoint]));
       for (const overlay of annotations.overlays) {
+        if (overlay.anchors) {
+          updateAnchoredLine(overlay, endpoints, geometry);
+          overlayViews.get(overlay)?.();
+        }
         if (!overlay.ready) continue;
         if (overlay.kind === 'line') {
           const line = graphLine(overlay, geometry);
@@ -1409,7 +1433,11 @@
           const [x2, y2] = line.at(line.high);
           line.intersections = lineIntersections(line, geometry);
           geometry.overlays.set(overlay.id, line);
-          drawingOverlays.append(svgElement('line', { class: 'overlay-line', x1, y1, x2, y2 }));
+          const selected = annotations.activeLine === overlay.id;
+          drawingOverlays.append(
+            svgElement('line', { class: selected ? 'overlay-line is-selected' : 'overlay-line', 'data-line-id': overlay.id, x1, y1, x2, y2 }),
+            svgElement('line', { class: 'overlay-line-hit', 'data-line-id': overlay.id, 'aria-hidden': 'true', x1, y1, x2, y2 })
+          );
         } else {
           const { toPixels } = geometry;
           const cx = toPixels(overlay.a);
@@ -1419,6 +1447,68 @@
           drawingOverlays.append(svgElement('circle', { class: 'overlay-circle', cx, cy, r }));
         }
       }
+      const active = annotations.overlays.find(overlay => overlay.id === annotations.activeLine && overlay.ready);
+      selectedLineDisplay.hidden = !active;
+      const equation = active ? '直线方程　' + lineDisplay(active) : '';
+      if (selectedLineDisplay.textContent !== equation) selectedLineDisplay.textContent = equation;
+    }
+
+    function updateAnchoredLine(overlay, endpoints, geometry) {
+      const [first, second] = overlay.anchors.map(id => endpoints.get(id));
+      const [x, screenY] = endpointLocation(first, geometry);
+      let a, b;
+      if (second) {
+        const [nextX, nextY] = endpointLocation(second, geometry);
+        const dx = nextX - x;
+        const dy = nextY - screenY;
+        const length = Math.hypot(dx, dy);
+        if (length < 1e-7) {
+          overlay.error = overlay.ready ? '两点重合，暂保留上一条有效直线。' : '两点重合，无法确定直线。';
+          return;
+        }
+        a = dy / length;
+        b = Math.abs(dx) < 1e-9 ? 0 : dx / length;
+        // Keep points on the constructed line on the same side when its direction changes sign.
+        if (overlay.ready && a * overlay.a + b * overlay.b < 0) {
+          a = -a;
+          b = -b;
+        }
+      } else {
+        const slope = overlay.bindings.get('k').value;
+        const length = Math.hypot(slope, 1);
+        a = -slope / length;
+        b = 1 / length;
+        const worldX = Math.abs(x) < 1e-9 ? 0 : geometry.toUnits(x);
+        overlay.anchorPosition = [worldX, geometry.toUnits(-screenY)];
+        syncIntercept(overlay);
+      }
+      const normalOffset = b * screenY - a * x;
+      const c = geometry.toUnits(Math.abs(normalOffset) < 1e-9 ? 0 : normalOffset);
+      const equation = lineDisplay({ a, b, c });
+      const labels = second ? `${first.label}、${second.label}` : first.label;
+      Object.assign(overlay, { a, b, c, equation, formula: '经过 ' + labels, ready: true, error: '' });
+    }
+
+    function syncIntercept(overlay) {
+      const [x, y] = overlay.anchorPosition;
+      const k = overlay.bindings.get('k');
+      const b = overlay.bindings.get('b');
+      b.value = y - k.value * x;
+      b.locked = x === 0;
+      const ends = b.locked ? [y, y] : [y - x * k.lower, y - x * k.upper];
+      b.lower = Math.min(...ends);
+      b.upper = Math.max(...ends);
+    }
+
+    function updateSlopeFromIntercept(overlay) {
+      const [x, y] = overlay.anchorPosition;
+      const k = overlay.bindings.get('k');
+      const b = overlay.bindings.get('b');
+      if (x === 0) return;
+      const ends = [(y - b.lower) / x, (y - b.upper) / x];
+      k.lower = Math.min(...ends);
+      k.upper = Math.max(...ends);
+      k.value = Math.min(k.upper, Math.max(k.lower, (y - b.value) / x));
     }
 
     function circleGeometry(cx, cy, r) {
@@ -1435,6 +1525,13 @@
       if (point.shape === 'circle') return overlay.at(point.t);
       const distance = geometry.toPixels(point.t);
       return overlay.at(Math.max(overlay.low, Math.min(overlay.high, distance)));
+    }
+
+    function endpointLocation(endpoint, geometry) {
+      const { project, toPixels } = geometry;
+      if (endpoint.kind === 'focus') return project([toPixels(endpoint.onAxis), 0]);
+      if (endpoint.position) return [toPixels(endpoint.position[0]), -toPixels(endpoint.position[1])];
+      return pointLocation(endpoint, geometry);
     }
 
     function polynomialRootsInUnitInterval(coefficients) {
@@ -1541,7 +1638,7 @@
         targets.push(...circleConicCrossings(oval, base));
       }
       for (const overlay of annotations.overlays) {
-        if (!overlay.ready || overlay.id === point.overlay) continue;
+        if (!overlay.ready || overlay.id === point.overlay || overlay.anchors?.includes(point.id)) continue;
         const other = geometry.overlays.get(overlay.id);
         if (overlay.kind === 'line') {
           targets.push(...ovalLineDistances(oval, other).map(other.at));
@@ -1596,8 +1693,14 @@
     const geometryObjects = document.querySelector('#geometry-objects');
     const geometryError = document.querySelector('#geometry-error');
     const lineEquation = document.querySelector('#line-equation');
+    const linePointButtons = document.querySelector('#line-point-buttons');
+    const linePointSummary = document.querySelector('#line-point-summary');
+    const lineModeEquation = document.querySelector('#line-from-equation');
+    const lineModePoints = document.querySelector('#line-from-points');
     const circleFields = ['a', 'b', 'r'].map(parameter => document.querySelector(`#circle-${parameter}`));
     let overlayKind;
+    let lineFromPoints = false;
+    let lineSelection = [];
     let nameRequest = null;
     let drag = null;
 
@@ -1633,16 +1736,10 @@
     function renderAnnotations() {
       const { annotations, geometry } = selection;
       if (!geometry) return;
-      const { width, height, project, toPixels } = geometry;
+      const { width, height } = geometry;
       drawingSegments.replaceChildren();
       drawingAnnotations.replaceChildren();
-      const endpoints = endpointCatalog().map(endpoint => {
-        let location;
-        if (endpoint.kind === 'focus') location = project([toPixels(endpoint.onAxis), 0]);
-        else if (endpoint.position) location = [toPixels(endpoint.position[0]), -toPixels(endpoint.position[1])];
-        else location = pointLocation(endpoint, geometry);
-        return { ...endpoint, location };
-      });
+      const endpoints = endpointCatalog().map(endpoint => ({ ...endpoint, location: endpointLocation(endpoint, geometry) }));
       const byId = new Map(endpoints.map(endpoint => [endpoint.id, endpoint]));
       for (const { first, second } of annotations.segments) {
         const [x1, y1] = byId.get(first).location;
@@ -1827,6 +1924,7 @@
     });
 
     function renderGeometryTools() {
+      document.querySelector('#line-tap-hint').hidden = !selection.annotations.overlays.some(overlay => overlay.kind === 'line');
       geometryObjects.replaceChildren(...selection.annotations.overlays.map(overlay => {
         const line = overlay.kind === 'line';
         const item = document.createElement('div');
@@ -1846,15 +1944,23 @@
           equation.textContent = overlay.formula ?? overlay.equation;
           value.hidden = !overlay.formula || !overlay.ready || overlay.formula === overlay.equation;
           value.textContent = overlay.equation ?? '';
-          message.textContent = overlay.error;
+          message.textContent = overlay.error || (overlay.anchors?.length === 1 && overlay.bindings.get('b').locked
+            ? '该点在 y 轴上，截距 b 固定。' : '');
           button.disabled = !overlay.ready;
           button.setAttribute('aria-description', overlay.equation ?? overlay.formula);
         }
 
-        fillSliderControls(sliders, overlay.bindings, () => {
+        const refresh = fillSliderControls(sliders, overlay.bindings, name => {
+          if (overlay.anchors) {
+            if (name === 'b') updateSlopeFromIntercept(overlay);
+            renderOverlays();
+            renderAnnotations();
+            return;
+          }
           if (evaluateOverlay(overlay, true)) renderDrawing();
           show();
         });
+        if (overlay.anchors) overlayViews.set(overlay, () => { refresh(); show(); });
         show();
         item.append(equation, value, sliders, message, button);
         return item;
@@ -1902,6 +2008,15 @@
 
     function buildOverlay(kind) {
       if (kind === 'line') {
+        if (lineFromPoints) {
+          if (!lineSelection.length) throw Error('请先选择 1 个或 2 个点。');
+          const anchors = [...lineSelection];
+          const bindings = anchors.length === 1 ? makeBindings(['k', 'b'], [1, 0]) : new Map();
+          const overlay = { kind, anchors, bindings, extent: 0 };
+          updateAnchoredLine(overlay, new Map(endpointCatalog().map(endpoint => [endpoint.id, endpoint])), selection.geometry);
+          if (!overlay.ready) throw Error(overlay.error);
+          return overlay;
+        }
         const source = lineEquation.value.trim();
         const names = lineParameterNames(source);
         const bindings = makeBindings(names, names.map(() => 1));
@@ -1923,12 +2038,47 @@
       return overlay;
     }
 
+    function updateLinePointPicker() {
+      const count = lineSelection.length;
+      for (const button of linePointButtons.children) {
+        const chosen = lineSelection.includes(button.dataset.anchorId);
+        button.setAttribute('aria-pressed', String(chosen));
+        button.disabled = count === 2 && !chosen;
+      }
+      linePointSummary.textContent = !linePointButtons.childElementCount
+        ? '还没有可选点。可以先在图上取点或标记顶点。'
+        : count ? `已选 ${count} 个点。` : '请选择已有的点。';
+    }
+
+    function setLineMode(fromPoints) {
+      lineFromPoints = fromPoints;
+      lineModeEquation.setAttribute('aria-pressed', String(!fromPoints));
+      lineModePoints.setAttribute('aria-pressed', String(fromPoints));
+      document.querySelector('#line-fields').hidden = overlayKind !== 'line' || fromPoints;
+      document.querySelector('#line-point-picker').hidden = overlayKind !== 'line' || !fromPoints;
+      geometryError.textContent = '';
+      if (!fromPoints) return;
+      linePointButtons.replaceChildren(...endpointCatalog().filter(endpoint => endpoint.visible).map(endpoint => {
+        const button = makeButton(endpoint.label, 'tool-button', () => {
+          if (lineSelection.includes(endpoint.id)) lineSelection = lineSelection.filter(id => id !== endpoint.id);
+          else if (lineSelection.length < 2) lineSelection.push(endpoint.id);
+          geometryError.textContent = '';
+          updateLinePointPicker();
+        });
+        button.dataset.anchorId = endpoint.id;
+        return button;
+      }));
+      updateLinePointPicker();
+    }
+
     function openGeometryDialog(kind) {
       overlayKind = kind;
       const line = kind === 'line';
       document.querySelector('#geometry-dialog-heading').textContent = line ? '添加直线' : '添加圆';
-      document.querySelector('#line-fields').hidden = !line;
+      document.querySelector('#line-source-options').hidden = !line;
       document.querySelector('#circle-fields').hidden = line;
+      lineSelection = [];
+      setLineMode(false);
       lineEquation.value = '';
       for (const field of circleFields) field.value = '';
       geometryError.textContent = '';
@@ -1939,6 +2089,8 @@
 
     document.querySelector('#add-line').addEventListener('click', () => openGeometryDialog('line'));
     document.querySelector('#add-circle').addEventListener('click', () => openGeometryDialog('circle'));
+    lineModeEquation.addEventListener('click', () => setLineMode(false));
+    lineModePoints.addEventListener('click', () => setLineMode(true));
     document.querySelector('#cancel-geometry').addEventListener('click', () => geometryDialog.close());
     document.querySelector('#geometry-form').addEventListener('input', () => { geometryError.textContent = ''; });
     document.querySelector('#geometry-form').addEventListener('submit', event => {
@@ -1946,7 +2098,7 @@
       let overlay;
       try {
         overlay = buildOverlay(overlayKind);
-        evaluateOverlay(overlay);
+        if (!overlay.anchors) evaluateOverlay(overlay);
       } catch (error) {
         geometryError.textContent = error.message;
         return;
@@ -2073,7 +2225,16 @@
       } else {
         drag.point.t = nearestCurveParameter(drag.point, x, y);
       }
+      if (selection.annotations.overlays.some(overlay => overlay.anchors?.includes(drag.point.id))) renderOverlays();
       renderAnnotations();
+    });
+    drawingPlot.addEventListener('click', event => {
+      const line = event.target.closest('[data-line-id]');
+      if (!line || !selection?.geometry) return;
+      const id = Number(line.dataset.lineId);
+      const { annotations } = selection;
+      annotations.activeLine = annotations.activeLine === id ? null : id;
+      renderOverlays();
     });
     for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
       drawingPlot.addEventListener(eventName, event => {
@@ -2228,7 +2389,7 @@
         const program = curvePrograms.get(id);
         const annotationKey = axis ? `${id}/${axis}` : id;
         if (!annotationsByView.has(annotationKey)) {
-          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null });
+          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null, activeLine: null });
         }
         selection = { id, axis, model: getDrawingModel(id, axis, ...inputs), annotations: annotationsByView.get(annotationKey) };
         views.drawing.querySelector('h1').textContent = `${config.name}绘图`;
