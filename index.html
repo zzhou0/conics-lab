@@ -154,6 +154,20 @@
     .point-buttons button { min-width: 44px; overflow-wrap: anywhere; }
     .erase-button { text-align: left; color: #853b27; overflow-wrap: anywhere; }
     .segment-line { stroke: #a74732; stroke-width: 2.1; stroke-linecap: round; }
+    .overlay-line, .overlay-circle { fill: none; stroke-width: 2.1; }
+    .overlay-line { stroke: #6952a3; }
+    .overlay-circle { stroke: #a06016; }
+    .annotation-point[data-shape="line"] { fill: #6952a3; }
+    .annotation-point[data-shape="circle"] { fill: #a06016; }
+    .snap-ring { fill: #6952a333; stroke: #6952a3; stroke-width: 1.5; pointer-events: none; }
+    .point-coordinate { font-style: normal; font-size: 13px; }
+    .geometry-tools, .geometry-objects { display: grid; gap: 8px; }
+    .geometry-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .geometry-item { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; }
+    .geometry-item p { margin: 0; overflow-wrap: anywhere; }
+    .circle-equation { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font: 1.12rem Georgia, serif; }
+    .circle-equation span { white-space: nowrap; }
+    .circle-equation input { width: 4.3em; min-height: 44px; font-size: 1rem; text-align: center; }
     .annotation-point { fill: var(--accent); stroke: white; stroke-width: 1.6; }
     .drag-handle, .drag-target { cursor: grab; }
     .drag-handle:active, .drag-target:active { cursor: grabbing; }
@@ -232,6 +246,7 @@
               <g data-layer="grid"></g>
               <g data-layer="segments"></g>
               <g data-layer="curve"></g>
+              <g data-layer="overlays"></g>
               <g data-layer="foci"></g>
               <g data-layer="annotations"></g>
             </svg>
@@ -279,6 +294,14 @@
           </div>
           <div class="segment-buttons" id="segment-buttons"></div>
         </section>
+        <section class="panel geometry-tools" aria-labelledby="geometry-heading">
+          <h2 id="geometry-heading">直线与圆</h2>
+          <div class="geometry-actions">
+            <button class="tool-button" id="add-line" type="button">添加直线</button>
+            <button class="tool-button" id="add-circle" type="button">添加圆</button>
+          </div>
+          <div class="geometry-objects" id="geometry-objects"></div>
+        </section>
         </div>
       </div>
     </section>
@@ -307,6 +330,29 @@
         <button class="tool-button" id="cancel-point-name" type="button">取消</button>
         <button class="tool-button" id="default-point-name" type="button"></button>
         <button class="draw-button" type="submit">确定</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog class="name-dialog" id="geometry-dialog" aria-labelledby="geometry-dialog-heading">
+    <form id="geometry-form" novalidate>
+      <h2 id="geometry-dialog-heading"></h2>
+      <div class="field" id="line-fields">
+        <label for="line-equation">直线方程</label>
+        <input id="line-equation" maxlength="300" autocomplete="off" spellcheck="false" placeholder="2x − y = 3" aria-describedby="line-examples geometry-error">
+        <p class="form-hint" id="line-examples">例如 y=2x+1、x=3、y−1=2(x−3)、x/2+y/3=1、x=1+2t; y=3−t。</p>
+      </div>
+      <div class="field" id="circle-fields">
+        <p class="form-hint">填写圆心 (a, b) 和半径 r。半径须大于 0。</p>
+        <div class="circle-equation">
+          <span>(x − <input id="circle-a" aria-label="圆心横坐标 a" placeholder="a">)²</span>
+          <span>+ (y − <input id="circle-b" aria-label="圆心纵坐标 b" placeholder="b">)²</span>
+          <span>= <input id="circle-r" aria-label="圆的半径 r" placeholder="r">²</span>
+        </div>
+      </div>
+      <p class="form-error" id="geometry-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="tool-button" id="cancel-geometry" type="button">取消</button>
+        <button class="draw-button" type="submit">绘制</button>
       </div>
     </form>
   </dialog>
@@ -625,6 +671,143 @@
       return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) ? Number(raw) : NaN;
     }
 
+    function parseAffine(source) {
+      const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|sqrt|sin|cos|tan|pi|[^\s]/g) ?? [];
+      const constant = value => [value, 0, 0, 0];
+      const scalar = terms => terms.slice(1).every(value => value === 0);
+      const scale = (terms, factor) => terms.map(value => value * factor);
+      let index = 0;
+
+      function requireToken(token) {
+        if (tokens[index++] !== token) throw Error('方程中的括号或符号不完整。');
+      }
+
+      function atom() {
+        const token = tokens[index++];
+        if (token === '(') {
+          const value = sum();
+          requireToken(')');
+          return value;
+        }
+        if (token === 'pi' || token === 'π') return constant(Math.PI);
+        if (token && /^[xyt]$/.test(token)) {
+          const terms = constant(0);
+          terms[1 + 'xyt'.indexOf(token)] = 1;
+          return terms;
+        }
+        if (['sqrt', '√', 'sin', 'cos', 'tan'].includes(token)) {
+          const value = atom();
+          if (!scalar(value)) throw Error('根号或三角函数内须为常数。');
+          return constant(Math[token === '√' ? 'sqrt' : token](value[0]));
+        }
+        if (token && /^[\d.]/.test(token)) {
+          const value = Number(token);
+          if (tokens[index] === '°') {
+            index++;
+            return constant(value * Math.PI / 180);
+          }
+          return constant(value);
+        }
+        throw Error('方程包含无法识别的符号。');
+      }
+
+      function signed() {
+        if (tokens[index] === '+' || tokens[index] === '-') {
+          const sign = tokens[index++] === '-' ? -1 : 1;
+          return scale(signed(), sign);
+        }
+        const base = atom();
+        if (tokens[index] !== '^') return base;
+        index++;
+        const power = signed();
+        if (!scalar(power) || (!scalar(base) && ![0, 1].includes(power[0]))) throw Error('请输入一次方程。');
+        return power[0] === 1 ? base : constant(base[0] ** power[0]);
+      }
+
+      function product() {
+        let value = signed();
+        while (index < tokens.length) {
+          const operator = tokens[index];
+          const implicit = /^(?:[a-z]+|[π√(])$/.test(operator);
+          if (!implicit && operator !== '*' && operator !== '/') break;
+          if (!implicit) index++;
+          const next = signed();
+          if (operator === '/') {
+            if (!scalar(next) || next[0] === 0) throw Error('分母须为非零常数。');
+            value = scale(value, 1 / next[0]);
+          } else if (scalar(next)) value = scale(value, next[0]);
+          else if (scalar(value)) value = scale(next, value[0]);
+          else throw Error('请输入一次方程。');
+        }
+        return value;
+      }
+
+      function sum() {
+        let value = product();
+        while (tokens[index] === '+' || tokens[index] === '-') {
+          const sign = tokens[index++] === '-' ? -1 : 1;
+          const next = product();
+          value = value.map((coefficient, i) => coefficient + sign * next[i]);
+        }
+        return value;
+      }
+
+      const terms = sum();
+      if (index !== tokens.length || !terms.every(Number.isFinite)) throw Error('请检查方程的符号和数值。');
+      return terms;
+    }
+
+    function equationTerms(equation) {
+      const sides = equation.split('=');
+      if (sides.length !== 2) throw Error('请输入带等号的直线方程。');
+      const left = parseAffine(sides[0]);
+      const right = parseAffine(sides[1]);
+      return left.map((value, i) => value - right[i]);
+    }
+
+    function parameterizedLine(xEquation, yEquation) {
+      const [x0, x, xy, dx] = equationTerms(xEquation);
+      const [y0, yx, y, dy] = equationTerms(yEquation);
+      if (!x || !y || xy || yx) throw Error('参数式须分别给出 x 和 y 关于 t 的一次式。');
+      const vx = -dx / x;
+      const vy = -dy / y;
+      const speed = Math.hypot(vx, vy);
+      if (!speed || !Number.isFinite(speed)) throw Error('参数式的方向向量须为非零向量。');
+      const a = vy / speed;
+      const b = -vx / speed;
+      return [a, b, a * (x0 / x) + b * (y0 / y)];
+    }
+
+    function parseLineEquation(raw) {
+      const source = raw.replace(/²/g, '^2').normalize('NFKC').toLowerCase()
+        .replace(/[−–—]/g, '-').replace(/[×·⋅]/g, '*').replace(/÷/g, '/')
+        .replace(/\\(?:left|right)/g, '').replace(/\\times|\\cdot/g, '*')
+        .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '(($1)/($2))')
+        .replace(/\\sqrt\{([^{}]+)\}/g, 'sqrt($1)')
+        .replace(/[{}]/g, '').replace(/[\[]/g, '(').replace(/[\]]/g, ')')
+        .replace(/(?:lambda|λ)/g, 't').trim();
+      const vector = source.match(/^\(\s*x\s*,\s*y\s*\)\s*=\s*\(([^,]+),(.+)\)\s*([+-])\s*t\s*\*?\s*\(([^,]+),(.+)\)$/)
+        ?? source.match(/^\(\s*x\s*,\s*y\s*\)\s*=\s*\(([^,]+),(.+)\)\s*([+-])\s*\(([^,]+),(.+)\)\s*\*?\s*t$/);
+      let a, b, c;
+      if (vector) {
+        const [, x0, y0, sign, dx, dy] = vector;
+        [a, b, c] = parameterizedLine('x=(' + x0 + ')' + sign + 't*(' + dx + ')', 'y=(' + y0 + ')' + sign + 't*(' + dy + ')');
+      } else {
+        const equations = source.split(/[;,\n]+/).map(value => value.trim()).filter(Boolean);
+        if (equations.length === 2) {
+          const [xEquation, yEquation] = /^\s*y\s*=/.test(equations[0]) ? equations.reverse() : equations;
+          [a, b, c] = parameterizedLine(xEquation, yEquation);
+        } else {
+          const [constant, x, y, t] = equationTerms(equations[0] ?? '');
+          if (t || equations.length !== 1) throw Error('参数式请同时输入 x 和 y 两个等式。');
+          [a, b, c] = [x, y, constant];
+        }
+      }
+      const length = Math.hypot(a, b);
+      if (!(length > 0) || !Number.isFinite(length) || !Number.isFinite(c / length)) throw Error('方程须表示一条可绘制的直线。');
+      return { a: a / length, b: b / length, c: c / length };
+    }
+
     const views = {
       home: document.querySelector('#home-view'),
       axis: document.querySelector('#axis-view'),
@@ -640,6 +823,7 @@
     const drawingGrid = drawingPlot.querySelector('[data-layer="grid"]');
     const drawingSegments = drawingPlot.querySelector('[data-layer="segments"]');
     const drawingCurve = drawingPlot.querySelector('[data-layer="curve"]');
+    const drawingOverlays = drawingPlot.querySelector('[data-layer="overlays"]');
     const drawingFoci = drawingPlot.querySelector('[data-layer="foci"]');
     const drawingAnnotations = drawingPlot.querySelector('[data-layer="annotations"]');
     const equationDisplay = document.querySelector('#drawing-equation');
@@ -685,9 +869,11 @@
       const width = drawingPlot.clientWidth;
       const height = drawingPlot.clientHeight;
       if (!model || !width || !height) return;
-      const { id, axis, a, b, p, foci, reference } = model;
+      const { id, axis, a, b, p, foci } = model;
+      const reference = selection.annotations.overlays.reduce((maximum, overlay) => Math.max(maximum, overlay.extent), model.reference);
       const radius = Math.min(width, height) * .34;
       const toPixels = value => value / reference * radius;
+      const toUnits = pixels => pixels / radius * reference;
       const rawStep = 35 / radius * reference;
       const magnitude = 10 ** Math.floor(Math.log10(rawStep)) || Number.MIN_VALUE;
       const tickValue = [1, 2, 5, 10].map(multiplier => magnitude * multiplier).find(step => step >= rawStep) ?? magnitude;
@@ -738,8 +924,95 @@
           }, label)
         );
       }
-      selection.geometry = { width, height, project, toPixels, pointAt };
+      selection.geometry = { width, height, project, toPixels, toUnits, pointAt };
+      renderOverlays();
       renderAnnotations();
+    }
+
+    function graphLine(overlay, geometry) {
+      const { a, b, c } = overlay;
+      const { width, height, toPixels } = geometry;
+      const offset = toPixels(-c);
+      const x = a * offset;
+      const y = -b * offset;
+      const dx = -b;
+      const dy = -a;
+      let low = -Infinity;
+      let high = Infinity;
+      for (const [origin, direction, bound] of [[x, dx, width / 2], [y, dy, height / 2]]) {
+        if (direction === 0) continue;
+        const first = (-bound - origin) / direction;
+        const second = (bound - origin) / direction;
+        low = Math.max(low, Math.min(first, second));
+        high = Math.min(high, Math.max(first, second));
+      }
+      const at = distance => [x + dx * distance, y + dy * distance];
+      const projectDistance = (px, py) => (px - x) * dx + (py - y) * dy;
+      return { x, y, dx, dy, low, high, at, projectDistance };
+    }
+
+    function lineIntersections(line, geometry, model) {
+      const { x, y, dx, dy, low, high } = line;
+      const intersections = [];
+      if (Math.abs(dx) > 1e-12) intersections.push(-x / dx);
+      if (Math.abs(dy) > 1e-12) intersections.push(-y / dy);
+      if (model.id === 'ellipse') {
+        const rx = geometry.toPixels(model.axis === 'x' ? model.a : model.b);
+        const ry = geometry.toPixels(model.axis === 'x' ? model.b : model.a);
+        const vx = dx / rx;
+        const vy = dy / ry;
+        const scale = Math.hypot(vx, vy);
+        const ux = vx / scale;
+        const uy = vy / scale;
+        const perpendicular = x / rx * uy - y / ry * ux;
+        if (Number.isFinite(perpendicular) && Math.abs(perpendicular) <= 1 + 1e-12) {
+          const closest = -(x / rx * ux + y / ry * uy);
+          const reach = Math.sqrt(Math.max(0, 1 - perpendicular ** 2));
+          intersections.push((closest - reach) / scale, (closest + reach) / scale);
+        }
+      }
+      return intersections.filter((position, i) => position >= low && position <= high
+        && !intersections.slice(0, i).some(previous => Math.abs(previous - position) < 1e-5));
+    }
+
+    function renderOverlays() {
+      const { geometry, model, annotations } = selection;
+      geometry.overlays = new Map();
+      drawingOverlays.replaceChildren();
+      for (const overlay of annotations.overlays) {
+        if (overlay.kind === 'line') {
+          const line = graphLine(overlay, geometry);
+          const [x1, y1] = line.at(line.low);
+          const [x2, y2] = line.at(line.high);
+          line.intersections = lineIntersections(line, geometry, model);
+          geometry.overlays.set(overlay.id, line);
+          drawingOverlays.append(svgElement('line', { class: 'overlay-line', x1, y1, x2, y2 }));
+        } else {
+          const { toPixels } = geometry;
+          const cx = toPixels(overlay.a);
+          const cy = -toPixels(overlay.b);
+          const r = toPixels(overlay.r);
+          geometry.overlays.set(overlay.id, {
+            at: t => [cx + r * Math.cos(Math.PI * t), cy - r * Math.sin(Math.PI * t)],
+            parameter: (x, y) => Math.atan2(cy - y, x - cx) / Math.PI,
+          });
+          drawingOverlays.append(svgElement('circle', { class: 'overlay-circle', cx, cy, r }));
+        }
+      }
+    }
+
+    function pointLocation(point, geometry) {
+      if (!point.overlay) return geometry.project(geometry.pointAt(point.t, point.side));
+      const overlay = geometry.overlays.get(point.overlay);
+      if (point.shape === 'circle') return overlay.at(point.t);
+      const distance = geometry.toPixels(point.t);
+      return overlay.at(Math.max(overlay.low, Math.min(overlay.high, distance)));
+    }
+
+    function pointCoordinates(x, y) {
+      const { toUnits } = selection.geometry;
+      const format = pixels => String(Number(toUnits(Math.abs(pixels) < 1e-8 ? 0 : pixels).toPrecision(6)));
+      return `(${format(x)}, ${format(-y)})`;
     }
 
     const vertexDirections = ['left', 'right', 'top', 'bottom'];
@@ -760,6 +1033,12 @@
     const nameInput = document.querySelector('#point-name-input');
     const nameError = document.querySelector('#point-name-error');
     const defaultNameButton = document.querySelector('#default-point-name');
+    const geometryDialog = document.querySelector('#geometry-dialog');
+    const geometryObjects = document.querySelector('#geometry-objects');
+    const geometryError = document.querySelector('#geometry-error');
+    const lineEquation = document.querySelector('#line-equation');
+    const circleFields = ['a', 'b', 'r'].map(parameter => document.querySelector(`#circle-${parameter}`));
+    let overlayKind;
     let nameRequest = null;
     let drag = null;
 
@@ -793,14 +1072,14 @@
     function renderAnnotations() {
       const { annotations, geometry } = selection;
       if (!geometry) return;
-      const { width, height, project, toPixels, pointAt } = geometry;
+      const { width, height, project, toPixels } = geometry;
       drawingSegments.replaceChildren();
       drawingAnnotations.replaceChildren();
       const endpoints = endpointCatalog().map(endpoint => {
         let location;
         if (endpoint.kind === 'focus') location = project([toPixels(endpoint.onAxis), 0]);
         else if (endpoint.kind === 'vertex') location = [toPixels(endpoint.position[0]), -toPixels(endpoint.position[1])];
-        else location = project(pointAt(endpoint.t, endpoint.side));
+        else location = pointLocation(endpoint, geometry);
         return { ...endpoint, location };
       });
       const byId = new Map(endpoints.map(endpoint => [endpoint.id, endpoint]));
@@ -809,24 +1088,33 @@
         const [x2, y2] = byId.get(second).location;
         drawingSegments.append(svgElement('line', { class: 'segment-line', x1, y1, x2, y2 }));
       }
-      for (const { id, label, location: [x, y], kind, visible, direction } of endpoints) {
+      for (const { id, label, location: [x, y], kind, visible, direction, shape, showCoordinates } of endpoints) {
         if (!visible) continue;
         if (kind !== 'focus') {
           const vertex = kind === 'vertex';
           const marker = svgElement('g', vertex ? {} : { class: 'drag-handle', 'data-point-id': id });
+          if (drag?.point.id === id && drag.snap) {
+            marker.append(svgElement('circle', { cx: x, cy: y, r: 12, class: 'snap-ring' }));
+          }
           if (!vertex) marker.append(svgElement('circle', { cx: x, cy: y, r: 22, fill: 'transparent', class: 'drag-target' }));
-          marker.append(svgElement('circle', { cx: x, cy: y, r: vertex ? 4.8 : 5.8, class: vertex ? 'vertex' : 'annotation-point' }));
-          const textWidth = Math.min(width * .4, label.length * 8);
+          marker.append(svgElement('circle', { cx: x, cy: y, r: vertex ? 4.8 : 5.8, class: vertex ? 'vertex' : 'annotation-point', 'data-shape': shape ?? '' }));
+          const coordinateLabel = showCoordinates ? pointCoordinates(x, y) : '';
+          const textWidth = Math.min(width * .44, Math.max(label.length, coordinateLabel.length) * 7.5);
           const horizontalVertex = direction === 'left' || direction === 'right';
           const avoidFocus = vertex && !horizontalVertex && (direction === 'top' || selection.id === 'parabola');
           const labelOnLeft = x + textWidth + 12 > width / 2 || ((x < 0 || avoidFocus) && x - textWidth - 12 > -width / 2);
           const labelBelow = horizontalVertex || y < -height / 2 + 26;
+          const textX = x + (labelOnLeft ? -8 : 8);
+          const textY = y + (labelBelow ? 18 : -10);
+          const anchor = labelOnLeft ? 'end' : 'start';
           marker.append(svgElement('text', {
             class: 'focus-label annotation-name',
-            x: x + (labelOnLeft ? -8 : 8),
-            y: y + (labelBelow ? 18 : -10),
-            'text-anchor': labelOnLeft ? 'end' : 'start',
+            x: textX, y: textY, 'text-anchor': anchor,
           }, label));
+          if (coordinateLabel) marker.append(svgElement('text', {
+            class: 'focus-label annotation-name point-coordinate',
+            x: textX, y: textY + (labelBelow ? 15 : -15), 'text-anchor': anchor,
+          }, coordinateLabel));
           drawingAnnotations.append(marker);
         }
         if (id === annotations.pending) {
@@ -903,12 +1191,13 @@
 
     function openNameDialog(request) {
       nameRequest = request;
-      nameHeading.textContent = request.vertex ? `命名${request.title}` : '命名曲线上的点';
+      const shapeName = request.overlay?.kind === 'line' ? '直线' : request.overlay?.kind === 'circle' ? '圆' : '曲线';
+      nameHeading.textContent = request.vertex ? `命名${request.title}` : `命名${shapeName}上的点`;
       nameInput.value = '';
       nameInput.removeAttribute('aria-invalid');
       nameError.textContent = '';
       defaultNameButton.hidden = !request.defaultName;
-      defaultNameButton.textContent = request.defaultName ? `使用默认名 ${request.defaultName}` : '';
+      defaultNameButton.textContent = request.defaultName ? `使用 ${request.defaultName}` : '';
       defaultNameButton.toggleAttribute('autofocus', Boolean(request.defaultName));
       nameInput.toggleAttribute('autofocus', !request.defaultName);
       nameDialog.showModal();
@@ -919,7 +1208,7 @@
     }
 
     function savePointName(raw) {
-      const { vertex } = nameRequest;
+      const { vertex, overlay } = nameRequest;
       const { annotations } = selection;
       const label = formatPointName(raw);
       const duplicate = endpointCatalog().some(endpoint => endpoint.id !== vertex?.id && endpoint.label === label);
@@ -932,8 +1221,14 @@
       if (vertex) annotations.vertices.set(vertex.id, { label, visible: true });
       else {
         const index = annotations.nextPoint++;
-        const t = ((.68 + index * .61803398875) % 1 - .5) * 1.8;
-        annotations.points.push({ id: `curve-${index}`, label, t, side: index % 2 ? -1 : 1 });
+        const fraction = (.68 + index * .61803398875) % 1;
+        let t = (fraction - .5) * 1.8;
+        if (overlay?.kind === 'line') {
+          const { low, high } = selection.geometry.overlays.get(overlay.id);
+          t = selection.geometry.toUnits(low + (high - low) * (.18 + .64 * fraction));
+        }
+        const shape = overlay?.kind ?? selection.id;
+        annotations.points.push({ id: `curve-${index}`, label, t, side: index % 2 ? -1 : 1, overlay: overlay?.id, shape });
       }
       nameDialog.close();
       updateAnnotationTools();
@@ -970,6 +1265,66 @@
       nameInput.removeAttribute('aria-invalid');
     });
 
+    function renderGeometryTools() {
+      geometryObjects.replaceChildren(...selection.annotations.overlays.map(overlay => {
+        const line = overlay.kind === 'line';
+        const item = document.createElement('div');
+        item.className = 'geometry-item';
+        const equation = document.createElement('p');
+        equation.className = 'form-hint';
+        equation.textContent = overlay.equation;
+        const button = makeButton(line ? '直线上取点' : '圆上取点', 'tool-button', () => openNameDialog({ overlay }));
+        button.setAttribute('aria-description', overlay.equation);
+        item.append(equation, button);
+        return item;
+      }));
+    }
+
+    function openGeometryDialog(kind) {
+      overlayKind = kind;
+      const line = kind === 'line';
+      document.querySelector('#geometry-dialog-heading').textContent = line ? '添加直线' : '添加圆';
+      document.querySelector('#line-fields').hidden = !line;
+      document.querySelector('#circle-fields').hidden = line;
+      lineEquation.value = '';
+      for (const field of circleFields) field.value = '';
+      geometryError.textContent = '';
+      lineEquation.toggleAttribute('autofocus', line);
+      circleFields[0].toggleAttribute('autofocus', !line);
+      geometryDialog.showModal();
+    }
+
+    document.querySelector('#add-line').addEventListener('click', () => openGeometryDialog('line'));
+    document.querySelector('#add-circle').addEventListener('click', () => openGeometryDialog('circle'));
+    document.querySelector('#cancel-geometry').addEventListener('click', () => geometryDialog.close());
+    document.querySelector('#geometry-form').addEventListener('input', () => { geometryError.textContent = ''; });
+    document.querySelector('#geometry-form').addEventListener('submit', event => {
+      event.preventDefault();
+      let data;
+      try {
+        if (overlayKind === 'line') {
+          const equation = lineEquation.value.trim();
+          const coefficients = parseLineEquation(equation);
+          data = { ...coefficients, extent: Math.abs(coefficients.c), equation };
+        } else {
+          const [a, b, r] = circleFields.map(readNumber);
+          const extent = Math.max(Math.abs(a), Math.abs(b)) + r;
+          if (!Number.isFinite(extent) || !(r > 0)) throw Error('请输入有限的圆心坐标和大于 0 的半径。');
+          const shift = (variable, value) => value === 0 ? `${variable}²` : `(${variable} ${value < 0 ? '+' : '−'} ${formatNumber(Math.abs(value))})²`;
+          data = { a, b, r, extent, equation: `${shift('x', a)} + ${shift('y', b)} = ${formatNumber(r)}²` };
+        }
+      } catch (error) {
+        geometryError.textContent = error.message;
+        return;
+      }
+      const { overlays } = selection.annotations;
+      overlays.push({ ...data, kind: overlayKind, id: overlays.length + 1 });
+      geometryDialog.close();
+      renderDrawing();
+      renderGeometryTools();
+      updateAnnotationTools();
+    });
+
     function nearestCurveParameter(point, x, y) {
       const { model, geometry: { project, pointAt } } = selection;
       const limit = model.id === 'ellipse' ? 1 : .95;
@@ -999,30 +1354,84 @@
       return (left + right) / 2;
     }
 
+    function snappedLineDistance(state, line, requested, now) {
+      const distance = Math.max(line.low, Math.min(line.high, requested));
+      const previous = state.rawDistance ?? distance;
+      state.rawDistance = distance;
+      if (state.snap) {
+        if (now - state.snap.started < 210 || Math.abs(distance - state.snap.distance) < 18) return state.snap.distance;
+        state.lastSnap = state.snap.distance;
+        state.snap = null;
+      }
+      const nearby = line.intersections.filter(position => position !== state.lastSnap && (
+        Math.abs(position - distance) <= 9 || (position - previous) * (position - distance) < 0
+      ));
+      nearby.sort((first, second) => Math.abs(first - previous) - Math.abs(second - previous));
+      if (Math.abs(distance - state.lastSnap) > 24) state.lastSnap = undefined;
+      if (nearby.length === 0) return distance;
+      state.snap = { distance: nearby[0], started: now };
+      return nearby[0];
+    }
+
     drawingPlot.addEventListener('pointerdown', event => {
       const handle = event.target.closest('[data-point-id]');
       if (!handle || drag || event.button !== 0) return;
-      const point = selection.annotations.points.find(item => item.id === handle.dataset.pointId);
+      const { annotations, geometry } = selection;
       const transform = drawingPlot.getScreenCTM()?.inverse();
       if (!transform) return;
       const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform);
-      const { project, pointAt } = selection.geometry;
-      const [pointX, pointY] = project(pointAt(point.t, point.side));
-      drag = { pointerId: event.pointerId, point, dx: pointX - pointer.x, dy: pointY - pointer.y };
+      // Large touch targets can overlap. Pick the marker whose center is closest.
+      let point = annotations.points.find(item => item.id === handle.dataset.pointId);
+      let [pointX, pointY] = pointLocation(point, geometry);
+      let best = Math.hypot(pointX - pointer.x, pointY - pointer.y);
+      for (const candidate of annotations.points) {
+        const [x, y] = pointLocation(candidate, geometry);
+        const distance = Math.hypot(x - pointer.x, y - pointer.y);
+        if (distance < best) {
+          point = candidate;
+          pointX = x;
+          pointY = y;
+          best = distance;
+        }
+      }
+      const overlay = geometry.overlays.get(point.overlay);
+      drag = {
+        pointerId: event.pointerId, point, dx: pointX - pointer.x, dy: pointY - pointer.y,
+        startX: event.clientX, startY: event.clientY, moved: false,
+        rawDistance: point.shape === 'line' ? overlay.projectDistance(pointX, pointY) : undefined,
+      };
       drawingPlot.setPointerCapture(event.pointerId);
       event.preventDefault();
     });
     drawingPlot.addEventListener('pointermove', event => {
       if (drag?.pointerId !== event.pointerId || !selection?.geometry) return;
+      if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return;
+      drag.moved = true;
       const transform = drawingPlot.getScreenCTM()?.inverse();
       if (!transform) return;
       const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform);
-      drag.point.t = nearestCurveParameter(drag.point, pointer.x + drag.dx, pointer.y + drag.dy);
+      const x = pointer.x + drag.dx;
+      const y = pointer.y + drag.dy;
+      const { geometry } = selection;
+      const overlay = geometry.overlays.get(drag.point.overlay);
+      if (drag.point.shape === 'line') {
+        const distance = snappedLineDistance(drag, overlay, overlay.projectDistance(x, y), event.timeStamp);
+        drag.point.t = geometry.toUnits(distance);
+      } else if (drag.point.shape === 'circle') {
+        drag.point.t = overlay.parameter(x, y);
+      } else {
+        drag.point.t = nearestCurveParameter(drag.point, x, y);
+      }
       renderAnnotations();
     });
     for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
       drawingPlot.addEventListener(eventName, event => {
-        if (drag?.pointerId === event.pointerId) drag = null;
+        if (drag?.pointerId !== event.pointerId) return;
+        const state = drag;
+        drag = null;
+        const tap = eventName === 'pointerup' && !state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < 5;
+        if (tap && ['ellipse', 'line'].includes(state.point.shape)) state.point.showCoordinates = !state.point.showCoordinates;
+        if (tap || state.snap) renderAnnotations();
       });
     }
 
@@ -1081,6 +1490,7 @@
 
     function renderRoute(moveFocus = true) {
       if (nameDialog.open) nameDialog.close();
+      if (geometryDialog.open) geometryDialog.close();
       drag = null;
       const [id, axis, ...rest] = location.hash.slice(1).split('/');
       const config = Object.prototype.hasOwnProperty.call(drawingConfigs, id) ? drawingConfigs[id] : null;
@@ -1103,7 +1513,7 @@
         const [a, b] = valuesByCurve.get(id) ?? config.initial;
         const annotationKey = `${id}/${axis}`;
         if (!annotationsByView.has(annotationKey)) {
-          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], nextPoint: 0, connecting: false, pending: null });
+          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null });
         }
         selection = { id, axis, model: getDrawingModel(id, axis, a, b), annotations: annotationsByView.get(annotationKey) };
         views.drawing.querySelector('h1').textContent = `${config.name}绘图`;
@@ -1120,6 +1530,7 @@
         clearError();
         showDrawingDetails(selection.model);
         renderDrawing();
+        renderGeometryTools();
         updateAnnotationTools();
       } else {
         selection = null;
