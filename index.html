@@ -120,7 +120,9 @@
       --grid: #eee1d6; --axis: #a78e7f; --focus: #813b1d;
     }
     .drawing-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 340px); gap: 16px; align-items: start; padding-bottom: 26px; }
+    .drawing-surface { touch-action: none; }
     .drawing-layout .plot { height: clamp(260px, 39vw, 472px); }
+    .plot-scroll-hint { display: none; margin: 8px 0 0; }
     .drawing-side { display: grid; gap: 14px; min-width: 0; }
     #drawing-panel { position: sticky; top: 12px; }
     .drawing-equation { font-size: clamp(1.05rem, 2.25vw, 1.55rem); line-height: 1.4; margin-top: 6px; overflow-wrap: anywhere; }
@@ -153,7 +155,7 @@
     .erase-button { text-align: left; color: #853b27; overflow-wrap: anywhere; }
     .segment-line { stroke: #a74732; stroke-width: 2.1; stroke-linecap: round; }
     .annotation-point { fill: var(--accent); stroke: white; stroke-width: 1.6; }
-    .drag-handle, .drag-target { touch-action: none; cursor: grab; }
+    .drag-handle, .drag-target { cursor: grab; }
     .drag-handle:active, .drag-target:active { cursor: grabbing; }
     .annotation-name { pointer-events: none; font-size: 15px; stroke-width: 4.5px; }
     .endpoint-ring { fill: none; stroke: #a74732; stroke-width: 2; pointer-events: none; }
@@ -162,6 +164,9 @@
     .name-dialog form { display: grid; gap: 12px; }
     .dialog-actions { justify-content: flex-end; }
     .dialog-actions .draw-button { padding: 0 14px; background: #08775c; }
+    @media (any-pointer: coarse) {
+      .plot-scroll-hint { display: block; }
+    }
     @media (max-width: 920px) {
       .shell { width: calc(100% - 40px); }
       .panel { padding: 15px; }
@@ -221,14 +226,17 @@
       </div>
       <div class="drawing-layout">
         <section class="panel" id="drawing-panel" aria-label="曲线坐标图">
-          <svg class="plot" id="drawing-plot" xmlns="http://www.w3.org/2000/svg" role="img">
-            <title></title>
-            <g data-layer="grid"></g>
-            <g data-layer="segments"></g>
-            <g data-layer="curve"></g>
-            <g data-layer="foci"></g>
-            <g data-layer="annotations"></g>
-          </svg>
+          <div class="drawing-surface">
+            <svg class="plot" id="drawing-plot" xmlns="http://www.w3.org/2000/svg" role="img">
+              <title></title>
+              <g data-layer="grid"></g>
+              <g data-layer="segments"></g>
+              <g data-layer="curve"></g>
+              <g data-layer="foci"></g>
+              <g data-layer="annotations"></g>
+            </svg>
+          </div>
+          <p class="form-hint plot-scroll-hint">从绘图区外上下滑动页面。</p>
           <div class="legend">
             <span><i></i>曲线</span>
             <span><i class="dot"></i>焦点</span>
