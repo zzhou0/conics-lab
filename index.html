@@ -890,10 +890,19 @@
       const axialSize = vertical ? height : width;
       const crossSize = vertical ? width : height;
       let pointAt;
+      let ellipse;
       if (id === 'ellipse') {
         const size = { rx: toPixels(a), ry: toPixels(b) };
         geometry.append(svgElement('ellipse', { ...size, class: 'interior' }), svgElement('ellipse', { ...size, class: 'curve' }));
         pointAt = t => [size.rx * Math.cos(Math.PI * t), -size.ry * Math.sin(Math.PI * t)];
+        ellipse = {
+          cx: 0, cy: 0, rx: vertical ? size.ry : size.rx, ry: vertical ? size.rx : size.ry,
+          at: t => project(pointAt(t)),
+          parameter: (x, y) => {
+            const [localX, localY] = project([x, y]);
+            return Math.atan2(-localY / size.ry, localX / size.rx) / Math.PI;
+          },
+        };
       } else if (id === 'hyperbola') {
         pointAt = drawHyperbola(geometry, toPixels(a), toPixels(b), axialSize, crossSize);
       } else {
@@ -924,7 +933,7 @@
           }, label)
         );
       }
-      selection.geometry = { width, height, project, toPixels, toUnits, pointAt };
+      selection.geometry = { width, height, project, toPixels, toUnits, pointAt, ellipse };
       renderOverlays();
       renderAnnotations();
     }
@@ -951,32 +960,35 @@
       return { x, y, dx, dy, low, high, at, projectDistance };
     }
 
-    function lineIntersections(line, geometry, model) {
+    function ovalLineDistances(oval, line) {
+      const { rx, ry, cx, cy } = oval;
+      const { x, y, dx, dy } = line;
+      const vx = dx / rx;
+      const vy = dy / ry;
+      const scale = Math.hypot(vx, vy);
+      const ux = vx / scale;
+      const uy = vy / scale;
+      const offsetX = (x - cx) / rx;
+      const offsetY = (y - cy) / ry;
+      const perpendicular = offsetX * uy - offsetY * ux;
+      if (!Number.isFinite(perpendicular) || Math.abs(perpendicular) > 1 + 1e-12) return [];
+      const closest = -(offsetX * ux + offsetY * uy);
+      const reach = Math.sqrt(Math.max(0, 1 - perpendicular ** 2));
+      return [(closest - reach) / scale, (closest + reach) / scale];
+    }
+
+    function lineIntersections(line, geometry) {
       const { x, y, dx, dy, low, high } = line;
       const intersections = [];
       if (Math.abs(dx) > 1e-12) intersections.push(-x / dx);
       if (Math.abs(dy) > 1e-12) intersections.push(-y / dy);
-      if (model.id === 'ellipse') {
-        const rx = geometry.toPixels(model.axis === 'x' ? model.a : model.b);
-        const ry = geometry.toPixels(model.axis === 'x' ? model.b : model.a);
-        const vx = dx / rx;
-        const vy = dy / ry;
-        const scale = Math.hypot(vx, vy);
-        const ux = vx / scale;
-        const uy = vy / scale;
-        const perpendicular = x / rx * uy - y / ry * ux;
-        if (Number.isFinite(perpendicular) && Math.abs(perpendicular) <= 1 + 1e-12) {
-          const closest = -(x / rx * ux + y / ry * uy);
-          const reach = Math.sqrt(Math.max(0, 1 - perpendicular ** 2));
-          intersections.push((closest - reach) / scale, (closest + reach) / scale);
-        }
-      }
+      if (geometry.ellipse) intersections.push(...ovalLineDistances(geometry.ellipse, line));
       return intersections.filter((position, i) => position >= low && position <= high
         && !intersections.slice(0, i).some(previous => Math.abs(previous - position) < 1e-5));
     }
 
     function renderOverlays() {
-      const { geometry, model, annotations } = selection;
+      const { geometry, annotations } = selection;
       geometry.overlays = new Map();
       drawingOverlays.replaceChildren();
       for (const overlay of annotations.overlays) {
@@ -984,7 +996,7 @@
           const line = graphLine(overlay, geometry);
           const [x1, y1] = line.at(line.low);
           const [x2, y2] = line.at(line.high);
-          line.intersections = lineIntersections(line, geometry, model);
+          line.intersections = lineIntersections(line, geometry);
           geometry.overlays.set(overlay.id, line);
           drawingOverlays.append(svgElement('line', { class: 'overlay-line', x1, y1, x2, y2 }));
         } else {
@@ -993,6 +1005,7 @@
           const cy = -toPixels(overlay.b);
           const r = toPixels(overlay.r);
           geometry.overlays.set(overlay.id, {
+            cx, cy, rx: r, ry: r, r,
             at: t => [cx + r * Math.cos(Math.PI * t), cy - r * Math.sin(Math.PI * t)],
             parameter: (x, y) => Math.atan2(cy - y, x - cx) / Math.PI,
           });
@@ -1007,6 +1020,134 @@
       if (point.shape === 'circle') return overlay.at(point.t);
       const distance = geometry.toPixels(point.t);
       return overlay.at(Math.max(overlay.low, Math.min(overlay.high, distance)));
+    }
+
+    function polynomialRootsInUnitInterval(coefficients) {
+      const scale = Math.max(...coefficients.map(Math.abs));
+      if (!(scale > 0) || !Number.isFinite(scale)) return [];
+      const terms = coefficients.map(value => value / scale);
+      while (terms.length > 1 && Math.abs(terms.at(-1)) < 1e-14) terms.pop();
+      if (terms.length === 1) return [];
+      if (terms.length === 2) {
+        const root = -terms[0] / terms[1];
+        return root >= -1 && root <= 1 ? [root] : [];
+      }
+      const evaluate = x => terms.reduceRight((value, term) => value * x + term, 0);
+      const derivative = terms.slice(1).map((term, i) => term * (i + 1));
+      const critical = polynomialRootsInUnitInterval(derivative);
+      const cuts = [-1, ...critical.filter(root => Math.abs(root) < 1), 1];
+      const values = cuts.map(evaluate);
+      const tolerance = 1e-11;
+      const roots = cuts.filter((cut, i) => Math.abs(values[i]) <= tolerance);
+      // Between consecutive critical points the polynomial is monotone.
+      // Checking the critical points themselves also finds tangent intersections.
+      for (let i = 1; i < cuts.length; i++) {
+        if (Math.abs(values[i - 1]) <= tolerance || Math.abs(values[i]) <= tolerance
+          || Math.sign(values[i - 1]) === Math.sign(values[i])) continue;
+        let low = cuts[i - 1];
+        let high = cuts[i];
+        const sign = Math.sign(values[i - 1]);
+        for (let step = 0; step < 48; step++) {
+          const middle = (low + high) / 2;
+          if (Math.sign(evaluate(middle)) === sign) low = middle;
+          else high = middle;
+        }
+        roots.push((low + high) / 2);
+      }
+      return roots.sort((a, b) => a - b);
+    }
+
+    function circleConicCrossings(circle, conic) {
+      const { cx, cy, r } = circle;
+      const { x, y, terms: [a, b, c, d, e] } = conic;
+      const multiply = (first, second) => {
+        const result = [0, 0, 0, 0, 0];
+        for (let i = 0; i < 3; i++) {
+          for (let j = 0; j < 3; j++) result[i + j] += first[i] * second[j];
+        }
+        return result;
+      };
+      const denominator = [1, 0, 1];
+      const denominatorSquared = multiply(denominator, denominator);
+      const result = [];
+      for (const side of [-1, 1]) {
+        // Two rational half-circle charts cover the full circle with finite parameters.
+        const xn = [cx - x + side * r, 0, cx - x - side * r];
+        const yn = [cy - y, 2 * r, cy - y];
+        const xx = multiply(xn, xn);
+        const yy = multiply(yn, yn);
+        const xw = multiply(xn, denominator);
+        const yw = multiply(yn, denominator);
+        const equation = xx.map((term, i) => a * term + b * yy[i] + c * xw[i] + d * yw[i] + e * denominatorSquared[i]);
+        for (const u of polynomialRootsInUnitInterval(equation)) {
+          const inverse = 1 / (1 + u * u);
+          result.push([cx + side * r * (1 - u * u) * inverse, cy + 2 * r * u * inverse]);
+        }
+      }
+      return result;
+    }
+
+    function baseConicEquation(geometry, model) {
+      const vertical = model.axis === 'y';
+      const { toPixels } = geometry;
+      if (model.id === 'parabola') {
+        const vertex = toPixels(model.b);
+        const focusDistance = 4 * toPixels(model.p);
+        return vertical
+          ? { x: 0, y: -vertex, terms: [1, 0, 0, focusDistance, 0] }
+          : { x: vertex, y: 0, terms: [0, 1, -focusDistance, 0, 0] };
+      }
+      const rx = toPixels(vertical ? model.b : model.a);
+      const ry = toPixels(vertical ? model.a : model.b);
+      const hyperbola = model.id === 'hyperbola';
+      return {
+        x: 0, y: 0,
+        terms: [
+          (hyperbola && vertical ? -1 : 1) * ry ** 2,
+          (hyperbola && !vertical ? -1 : 1) * rx ** 2,
+          0, 0, -((rx * ry) ** 2),
+        ],
+      };
+    }
+
+    function ovalSnapTargets(point, oval, geometry, model, annotations) {
+      const matchesCircle = (first, second) => first.cx === second.cx && first.cy === second.cy
+        && first.rx === second.r && first.ry === second.r;
+      const targets = [0, .5, 1, -.5].map(t => oval.at(t));
+      const axes = [{ x: 0, y: 0, dx: 1, dy: 0 }, { x: 0, y: 0, dx: 0, dy: 1 }];
+      for (const axis of axes) {
+        for (const distance of ovalLineDistances(oval, axis)) targets.push([distance * axis.dx, distance * axis.dy]);
+      }
+      const base = baseConicEquation(geometry, model);
+      if (point.shape === 'circle' && (!geometry.ellipse || !matchesCircle(geometry.ellipse, oval))) {
+        targets.push(...circleConicCrossings(oval, base));
+      }
+      for (const overlay of annotations.overlays) {
+        if (overlay.id === point.overlay) continue;
+        const other = geometry.overlays.get(overlay.id);
+        if (overlay.kind === 'line') {
+          targets.push(...ovalLineDistances(oval, other).map(other.at));
+        } else if (matchesCircle(oval, other)) {
+          continue;
+        } else if (point.shape === 'ellipse') {
+          targets.push(...circleConicCrossings(other, base));
+        } else {
+          const conic = { x: other.cx, y: other.cy, terms: [1, 1, 0, 0, -(other.r ** 2)] };
+          targets.push(...circleConicCrossings(oval, conic));
+        }
+      }
+      for (const other of annotations.points) {
+        if (other !== point && other.shape === point.shape && other.overlay === point.overlay) {
+          targets.push(oval.at(other.t));
+        }
+      }
+      const visible = targets.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)
+        && Math.abs(x) <= geometry.width / 2 && Math.abs(y) <= geometry.height / 2);
+      const distinct = [];
+      for (const target of visible) {
+        if (distinct.every(([x, y]) => Math.hypot(x - target[0], y - target[1]) > 1e-4)) distinct.push(target);
+      }
+      return distinct.map(([x, y]) => oval.parameter(x, y));
     }
 
     function pointCoordinates(x, y) {
@@ -1354,23 +1495,29 @@
       return (left + right) / 2;
     }
 
-    function snappedLineDistance(state, line, requested, now) {
-      const distance = Math.max(line.low, Math.min(line.high, requested));
+    function nearestWrappedDistance(target, reference, period) {
+      return period ? target + Math.round((reference - target) / period) * period : target;
+    }
+
+    function snappedDistance(state, targets, requested, now, period = 0) {
+      const distance = nearestWrappedDistance(requested, state.rawDistance ?? requested, period);
       const previous = state.rawDistance ?? distance;
       state.rawDistance = distance;
       if (state.snap) {
-        if (now - state.snap.started < 210 || Math.abs(distance - state.snap.distance) < 18) return state.snap.distance;
-        state.lastSnap = state.snap.distance;
+        const held = nearestWrappedDistance(state.snap.target, distance, period);
+        if (now - state.snap.started < 210 || Math.abs(distance - held) < 18) return held;
+        state.lastSnap = state.snap.target;
         state.snap = null;
       }
-      const nearby = line.intersections.filter(position => position !== state.lastSnap && (
-        Math.abs(position - distance) <= 9 || (position - previous) * (position - distance) < 0
-      ));
-      nearby.sort((first, second) => Math.abs(first - previous) - Math.abs(second - previous));
-      if (Math.abs(distance - state.lastSnap) > 24) state.lastSnap = undefined;
+      const nearby = targets.filter(target => target !== state.lastSnap)
+        .map(target => ({ target, position: nearestWrappedDistance(target, previous, period) }))
+        .filter(({ position }) => Math.abs(position - distance) <= 9 || (position - previous) * (position - distance) < 0)
+        .sort((first, second) => Math.abs(first.position - previous) - Math.abs(second.position - previous));
+      if (state.lastSnap !== undefined
+        && Math.abs(distance - nearestWrappedDistance(state.lastSnap, distance, period)) > 24) state.lastSnap = undefined;
       if (nearby.length === 0) return distance;
-      state.snap = { distance: nearby[0], started: now };
-      return nearby[0];
+      state.snap = { target: nearby[0].target, started: now };
+      return nearby[0].position;
     }
 
     drawingPlot.addEventListener('pointerdown', event => {
@@ -1395,10 +1542,17 @@
         }
       }
       const overlay = geometry.overlays.get(point.overlay);
+      const oval = point.shape === 'circle' ? overlay : point.shape === 'ellipse' ? geometry.ellipse : null;
+      const distanceScale = oval ? Math.PI * (oval.rx + oval.ry) / 2 : 0;
+      const targets = oval ? ovalSnapTargets(point, oval, geometry, selection.model, annotations)
+        .map(parameter => parameter * distanceScale) : [];
+      const rawDistance = oval ? oval.parameter(pointX, pointY) * distanceScale
+        : point.shape === 'line' ? overlay.projectDistance(pointX, pointY) : undefined;
       drag = {
         pointerId: event.pointerId, point, dx: pointX - pointer.x, dy: pointY - pointer.y,
         startX: event.clientX, startY: event.clientY, moved: false,
-        rawDistance: point.shape === 'line' ? overlay.projectDistance(pointX, pointY) : undefined,
+        rawDistance, oval, distanceScale, targets,
+        lastSnap: targets.find(target => Math.abs(nearestWrappedDistance(target, rawDistance, 2 * distanceScale) - rawDistance) < 1e-4),
       };
       drawingPlot.setPointerCapture(event.pointerId);
       event.preventDefault();
@@ -1415,10 +1569,13 @@
       const { geometry } = selection;
       const overlay = geometry.overlays.get(drag.point.overlay);
       if (drag.point.shape === 'line') {
-        const distance = snappedLineDistance(drag, overlay, overlay.projectDistance(x, y), event.timeStamp);
+        const requested = Math.max(overlay.low, Math.min(overlay.high, overlay.projectDistance(x, y)));
+        const distance = snappedDistance(drag, overlay.intersections, requested, event.timeStamp);
         drag.point.t = geometry.toUnits(distance);
-      } else if (drag.point.shape === 'circle') {
-        drag.point.t = overlay.parameter(x, y);
+      } else if (drag.oval) {
+        const parameter = drag.point.shape === 'circle' ? drag.oval.parameter(x, y) : nearestCurveParameter(drag.point, x, y);
+        const distance = snappedDistance(drag, drag.targets, parameter * drag.distanceScale, event.timeStamp, 2 * drag.distanceScale);
+        drag.point.t = nearestWrappedDistance(distance / drag.distanceScale, 0, 2);
       } else {
         drag.point.t = nearestCurveParameter(drag.point, x, y);
       }
