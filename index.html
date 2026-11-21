@@ -287,6 +287,7 @@
           </div>
           <div class="drawing-equation math" id="drawing-equation" role="math" aria-live="polite"></div>
           <p class="coordinates" id="drawing-coordinates"></p>
+          <p class="coordinates math" id="drawing-asymptote-equation" hidden></p>
           <p class="coordinates" id="drawing-directrix" hidden></p>
           <p class="coordinates drawing-equation" id="selected-line-equation" role="status" hidden></p>
         </section>
@@ -752,6 +753,12 @@
     document.querySelector('#panels').append(createPanel(curves[0]), createParabolaComparison(), createPanel(curves[1]));
 
     const drawingConfigs = {
+      circle: {
+        name: '圆', detail: '输入圆心坐标与半径', initial: [0, 0, 2],
+        labels: ['圆心横坐标 a', '圆心纵坐标 b', '半径 r'],
+        hint: 'a 和 b 是圆心坐标，半径 r 须大于 0。',
+        icon: 'M31 40a29 29 0 1 0 58 0 29 29 0 1 0-58 0',
+      },
       ellipse: {
         name: '椭圆', detail: '输入半长轴与半短轴的平方', initial: [16, 4],
         labels: ['半长轴平方 a²', '半短轴平方 b²'], hint: 'a² ≥ b² > 0，长轴沿所选坐标轴。a² = b² 时是圆。',
@@ -767,12 +774,6 @@
         labels: ['焦参数 p'],
         hint: 'p ≠ 0，正负号决定开口方向，|p| 是焦点到准线的距离。',
         icon: 'M104 9Q-56 40 104 71',
-      },
-      circle: {
-        name: '圆', detail: '输入圆心坐标与半径', initial: [0, 0, 2],
-        labels: ['圆心横坐标 a', '圆心纵坐标 b', '半径 r'],
-        hint: 'a 和 b 是圆心坐标，半径 r 须大于 0。',
-        icon: 'M31 40a29 29 0 1 0 58 0 29 29 0 1 0-58 0',
       },
     };
     const comparisonIcon = 'M16 40a44 28 0 1 0 88 0 44 28 0 1 0-88 0M16 40a44 12 0 1 0 88 0 44 12 0 1 0-88 0';
@@ -800,10 +801,10 @@
 
     const homeLinks = document.querySelector('#home-links');
     homeLinks.append(
-      makeTile({ href: '#eccentricity', title: '离心率', detail: '比较椭圆、抛物线和双曲线', id: 'eccentricity', icon: comparisonIcon }),
       ...Object.entries(drawingConfigs).map(([id, config]) => makeTile({
         href: `#${id}`, title: config.name, detail: config.detail, id, icon: config.icon,
-      }))
+      })),
+      makeTile({ href: '#eccentricity', title: '离心率', detail: '比较椭圆、抛物线和双曲线', id: 'eccentricity', icon: comparisonIcon })
     );
 
     function formatNumber(value) {
@@ -1248,6 +1249,7 @@
     const drawingAnnotations = drawingPlot.querySelector('[data-layer="annotations"]');
     const equationDisplay = document.querySelector('#drawing-equation');
     const coordinates = document.querySelector('#drawing-coordinates');
+    const asymptoteDisplay = document.querySelector('#drawing-asymptote-equation');
     const directrixDisplay = document.querySelector('#drawing-directrix');
     const selectedLineDisplay = document.querySelector('#selected-line-equation');
     const curveSliders = document.querySelector('#curve-sliders');
@@ -1263,8 +1265,21 @@
       return axis === 'x' ? `(${value}, 0)` : `(0, ${value})`;
     }
 
+    function hyperbolaAsymptoteEquation({ axis, a, b, inputs: [aSquared, bSquared] }) {
+      if (aSquared === bSquared) return '渐近线 y = ±x';
+      const root = (length, square) => Number.isInteger(length) && length ** 2 === square ? String(length) : `√(${square})`;
+      const aText = root(a, aSquared);
+      const bText = root(b, bSquared);
+      const [rise, run] = axis === 'x' ? [bText, aText] : [aText, bText];
+      const slope = run === '1' ? rise : `(${rise}/${run})`;
+      return `渐近线 y = ±${slope}x`.replaceAll('-', '−');
+    }
+
     function showDrawingDetails(model) {
       const { id, axis, cross, inputs: [first, second], foci, focusOffset } = model;
+      const asymptotes = id === 'hyperbola' ? hyperbolaAsymptoteEquation(model) : '';
+      asymptoteDisplay.textContent = asymptotes;
+      asymptoteDisplay.hidden = !asymptotes;
       if (id === 'circle') {
         const equation = circleDisplay(first, second, model.r);
         const center = `圆心 C(${formatNumber(first)}, ${formatNumber(second)})`;
@@ -1284,7 +1299,8 @@
       equationDisplay.textContent = equation;
       directrixDisplay.textContent = directrix;
       directrixDisplay.hidden = !parabola;
-      drawingPlot.querySelector('title').textContent = `${drawingConfigs[id].name}，焦点在 ${axis} 轴，${equation}${directrix ? '，' + directrix : ''}`;
+      const lineDetails = directrix || asymptotes;
+      drawingPlot.querySelector('title').textContent = `${drawingConfigs[id].name}，焦点在 ${axis} 轴，${equation}${lineDetails ? '，' + lineDetails : ''}`;
       const labels = foci.map(({ position, label }) => `${label}${formatPoint(position, axis)}`);
       if (parabola) labels.push('顶点 (0, 0)');
       coordinates.textContent = labels.join('　·　');
