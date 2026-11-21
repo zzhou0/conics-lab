@@ -1709,7 +1709,7 @@
         }
       }
       for (const other of annotations.points) {
-        if (other !== point && other.shape === point.shape && other.overlay === point.overlay) {
+        if (other !== point && !other.position && other.shape === point.shape && other.overlay === point.overlay) {
           targets.push(oval.at(other.t));
         }
       }
@@ -1803,15 +1803,16 @@
         const [x2, y2] = byId.get(second).location;
         drawingSegments.append(svgElement('line', { class: 'segment-line', x1, y1, x2, y2 }));
       }
-      for (const { id, label, location: [x, y], kind, visible, direction, shape, showCoordinates } of endpoints) {
+      for (const { id, label, location: [x, y], kind, visible, direction, shape, showCoordinates, position } of endpoints) {
         if (!visible) continue;
         if (kind !== 'focus' && kind !== 'center') {
           const vertex = kind === 'vertex';
-          const marker = svgElement('g', vertex ? {} : { class: 'drag-handle', 'data-point-id': id });
+          const draggable = !vertex && !position;
+          const marker = svgElement('g', draggable ? { class: 'drag-handle', 'data-point-id': id } : {});
           if (drag?.point.id === id && drag.snap) {
             marker.append(svgElement('circle', { cx: x, cy: y, r: 12, class: 'snap-ring' }));
           }
-          if (!vertex) marker.append(svgElement('circle', { cx: x, cy: y, r: 22, fill: 'transparent', class: 'drag-target' }));
+          if (draggable) marker.append(svgElement('circle', { cx: x, cy: y, r: 22, fill: 'transparent', class: 'drag-target' }));
           marker.append(svgElement('circle', { cx: x, cy: y, r: vertex ? 4.8 : 5.8, class: vertex ? 'vertex' : 'annotation-point', 'data-shape': shape ?? '' }));
           const coordinateLabel = showCoordinates ? pointCoordinates(x, y) : '';
           const textWidth = Math.min(width * .44, Math.max(label.length, coordinateLabel.length) * 7.5);
@@ -1980,6 +1981,23 @@
       nameInput.removeAttribute('aria-invalid');
     });
 
+    function eraseOverlay(overlay) {
+      const { annotations, geometry } = selection;
+      clearPlotGestures();
+      // Keep marked points available to segments and constructed lines at their current coordinates.
+      for (const point of annotations.points) {
+        if (point.overlay !== overlay.id) continue;
+        const [x, y] = pointLocation(point, geometry);
+        point.position = [geometry.toUnits(x), geometry.toUnits(-y)];
+        point.overlay = undefined;
+      }
+      annotations.overlays = annotations.overlays.filter(item => item !== overlay);
+      if (annotations.activeLine === overlay.id) annotations.activeLine = null;
+      renderDrawing();
+      renderGeometryTools();
+      document.querySelector(overlay.kind === 'line' ? '#add-line' : '#add-circle').focus({ preventScroll: true });
+    }
+
     function renderGeometryTools() {
       document.querySelector('#line-tap-hint').hidden = !selection.annotations.overlays.some(overlay => overlay.kind === 'line');
       geometryObjects.replaceChildren(...selection.annotations.overlays.map(overlay => {
@@ -1996,6 +2014,10 @@
         const sliders = document.createElement('div');
         sliders.className = 'parameter-sliders';
         const button = makeButton(line ? '直线上取点' : '圆上取点', 'tool-button', () => openNameDialog({ overlay }));
+        const erase = makeButton(line ? '擦除直线' : '擦除圆', 'erase-button', () => eraseOverlay(overlay));
+        const actions = document.createElement('div');
+        actions.className = 'geometry-actions';
+        actions.append(button, erase);
 
         function show() {
           equation.textContent = overlay.formula ?? overlay.equation;
@@ -2005,6 +2027,7 @@
             ? '该点在 y 轴上，截距 b 固定。' : '');
           button.disabled = !overlay.ready;
           button.setAttribute('aria-description', overlay.equation ?? overlay.formula);
+          erase.setAttribute('aria-description', overlay.equation ?? overlay.formula);
         }
 
         const refresh = fillSliderControls(sliders, overlay.bindings, name => {
@@ -2019,7 +2042,7 @@
         });
         if (overlay.anchors) overlayViews.set(overlay, () => { refresh(); show(); });
         show();
-        item.append(equation, value, sliders, message, button);
+        item.append(equation, value, sliders, message, actions);
         return item;
       }));
     }
@@ -2160,9 +2183,9 @@
         geometryError.textContent = error.message;
         return;
       }
-      const { overlays } = selection.annotations;
-      overlay.id = overlays.length + 1;
-      overlays.push(overlay);
+      const { annotations } = selection;
+      overlay.id = annotations.nextOverlay++;
+      annotations.overlays.push(overlay);
       geometryDialog.close();
       renderDrawing();
       renderGeometryTools();
@@ -2248,6 +2271,7 @@
       let [pointX, pointY] = pointLocation(point, geometry);
       let best = Math.hypot(pointX - pointer.x, pointY - pointer.y);
       for (const candidate of annotations.points) {
+        if (candidate.position) continue;
         const [x, y] = pointLocation(candidate, geometry);
         const distance = Math.hypot(x - pointer.x, y - pointer.y);
         if (distance < best) {
@@ -2597,7 +2621,7 @@
         const program = curvePrograms.get(id);
         const annotationKey = axis ? `${id}/${axis}` : id;
         if (!annotationsByView.has(annotationKey)) {
-          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, connecting: false, pending: null, activeLine: null, view: { zoom: 1, x: 0, y: 0 } });
+          annotationsByView.set(annotationKey, { vertices: new Map(), points: [], segments: [], overlays: [], nextPoint: 0, nextOverlay: 1, connecting: false, pending: null, activeLine: null, view: { zoom: 1, x: 0, y: 0 } });
         }
         selection = { id, axis, model: getDrawingModel(id, axis, ...inputs), annotations: annotationsByView.get(annotationKey) };
         views.drawing.querySelector('h1').textContent = `${config.name}绘图`;
